@@ -19,15 +19,39 @@ MARK_RE = re.compile(r"【\s*(\d+)\s*】")
 
 # ---------------- 提示词 ----------------
 
-def _glossary_messages(sample: str, target_lang: str) -> list[dict]:
+def _glossary_messages(sample: str, target_lang: str,
+                       existing: list[dict] | None = None) -> list[dict]:
+    existing_note = ""
+    existing_lines = ""
+    if existing:
+        lines = [f"{g['src']} = {g['dst']}" for g in existing if g.get("src") and g.get("dst")]
+        if lines:
+            existing_note = ("以下术语已经存在于术语表中，不要重复抽取它们（包括同一实体的不同写法）：\n")
+            existing_lines = "\n".join(lines[:400]) + "\n\n"
     return [
         {"role": "system", "content":
          "你是文学翻译助手。从给定的小说原文中抽取需要统一译法的专有名词：人名、地名、组织名、术语/专有词汇。"
-         "只抽取确实需要统一翻译的实体，不要普通词汇。"
+         "只抽取确实需要统一翻译的实体，不要普通词汇。" + existing_note +
          "严格输出 JSON：{\"terms\": [{\"src\": 原文, \"dst\": 译名, \"type\": \"人名|地名|组织|术语\"}]}。"
          "不要输出任何其他内容。"},
-        {"role": "user", "content": f"目标语言：{target_lang}\n\n原文样本：\n{sample}"},
+        {"role": "user", "content": f"目标语言：{target_lang}\n\n{existing_lines}原文样本：\n{sample}"},
     ]
+
+
+def _merge_glossary(existing: list[dict], new_terms: list[dict]) -> list[dict]:
+    """合并新生成的术语：按规范化 src 去重，已有术语（可能经用户编辑）优先保留。"""
+    def norm(s: str) -> str:
+        return re.sub(r"\s+", "", s).lower()
+
+    merged = [t for t in existing if isinstance(t, dict) and t.get("src")]
+    seen = {norm(t["src"]) for t in merged}
+    for t in new_terms:
+        key = norm(str(t.get("src", "")).strip())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(t)
+    return merged
 
 
 def _translate_messages(text: str, glossary: list[dict], target_lang: str,
@@ -126,15 +150,17 @@ async def generate_glossary(book_id: str) -> dict:
     book["status"] = "glossary"
     store.save_book(book)
     try:
+        existing = book.get("glossary") or []
         async with httpx.AsyncClient(timeout=180) as client:
-            raw = await chat(client, cfg, _glossary_messages(sample, cfg["target_lang"]),
+            raw = await chat(client, cfg,
+                             _glossary_messages(sample, cfg["target_lang"], existing),
                              json_mode=True)
         data = json.loads(raw)
         terms = data.get("terms") or data.get("glossary") or []
         if isinstance(terms, dict):
             terms = [{"src": k, "dst": v, "type": "术语"} for k, v in terms.items()]
         terms = [t for t in terms if isinstance(t, dict) and t.get("src")]
-        book["glossary"] = terms
+        book["glossary"] = _merge_glossary(existing, terms)
         book["status"] = "ready"
         book["error"] = None
     except Exception as e:

@@ -1,4 +1,4 @@
-import { createSignal, For, onMount, Show } from 'solid-js'
+import { createMemo, createSignal, For, onMount, Show } from 'solid-js'
 import { api } from './api'
 import type { BookSummary } from './types'
 
@@ -18,8 +18,44 @@ const STATUS_BADGE: Record<string, string> = {
 
 export default function BookList(props: { onOpen: (id: string) => void }) {
   const [books, setBooks] = createSignal<BookSummary[]>([])
+  const [query, setQuery] = createSignal('')
   const [uploading, setUploading] = createSignal(false)
   const [error, setError] = createSignal('')
+
+  // 模糊匹配：查询串的字符按顺序出现在目标中即匹配（大小写/空白不敏感），
+  // 返回分数用于排序（连续匹配、起始位置靠前得分更高），不匹配返回 null
+  const fuzzyScore = (text: string, query: string): number | null => {
+    const t = text.toLowerCase()
+    const q = query.toLowerCase().trim()
+    if (!q) return 0
+    if (t.includes(q)) return 1000 - t.indexOf(q)
+    let score = 0, ti = 0, streak = 0
+    for (const ch of q) {
+      const found = t.indexOf(ch, ti)
+      if (found === -1) return null
+      streak = found === ti ? streak + 1 : 0
+      score += 10 + streak * 5 - (found - ti)
+      ti = found + 1
+    }
+    return score
+  }
+
+  const filtered = createMemo(() => {
+    const q = query()
+    if (!q.trim()) return books()
+    return books()
+      .map((b) => {
+        const s = Math.max(
+          fuzzyScore(b.title_translated || '', q) ?? -1,
+          fuzzyScore(b.title, q) ?? -1,
+          fuzzyScore(b.author, q) ?? -1,
+        )
+        return { b, s }
+      })
+      .filter((x) => x.s >= 0)
+      .sort((x, y) => y.s - x.s)
+      .map((x) => x.b)
+  })
 
   const refresh = async () => {
     try { setBooks(await api.books()) } catch (e: any) { setError(String(e.message || e)) }
@@ -58,13 +94,23 @@ export default function BookList(props: { onOpen: (id: string) => void }) {
             onChange={onUpload} />
         </label>
         <button onClick={refresh}>刷新</button>
+        <input
+          class="ml-auto px-3 py-2 border border-line rounded-[6px] bg-card text-[14px] w-[220px] outline-none focus:border-primary"
+          type="search"
+          placeholder="搜索书名 / 作者…"
+          value={query()}
+          onInput={(e) => setQuery(e.currentTarget.value)}
+        />
       </div>
       {error() && <p class="text-danger text-[13px]">{error()}</p>}
       <Show when={books().length === 0}>
         <p class="text-muted text-center py-[30px]">还没有书籍，点击上方按钮上传。</p>
       </Show>
+      <Show when={books().length > 0 && filtered().length === 0}>
+        <p class="text-muted text-center py-[30px]">没有匹配「{query()}」的书籍。</p>
+      </Show>
       <div class="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3.5">
-        <For each={books()}>
+        <For each={filtered()}>
           {(b) => (
             <div class="bg-card border border-line rounded-[10px] p-3.5 cursor-pointer hover:border-primary"
               onClick={() => props.onOpen(b.id)}>
