@@ -346,3 +346,82 @@ def start_glossary(book_id: str) -> bool:
         return False
     _tasks[book_id] = asyncio.create_task(generate_glossary(book_id))
     return True
+
+
+# ---------------- 重翻书名 / 目录 ----------------
+
+async def _retranslate_book_title(book_id: str) -> None:
+    """只重翻书名，不动章节。"""
+    try:
+        book = store.load_book(book_id)
+        if not book or not book.get("title"):
+            return
+        cfg = store.load_config()
+        async with httpx.AsyncClient(timeout=180) as client:
+            raw = await chat(client, cfg, _title_messages(
+                [book["title"]], book.get("glossary") or [], cfg["target_lang"]))
+        parsed = _parse_segment(raw, 1)
+        book = store.load_book(book_id) or book
+        book["title_translated"] = (parsed[0] or raw).strip() or book["title"]
+        store.save_book(book)
+    finally:
+        _tasks.pop(book_id, None)
+
+
+async def _retranslate_toc(book_id: str) -> None:
+    """只重翻全部章节标题（目录）；epub 已有译文的章节同步更新译文里的标题元素。"""
+    try:
+        book = store.load_book(book_id)
+        if not book or not book["chapters"]:
+            return
+        cfg = store.load_config()
+        glossary = book.get("glossary") or []
+        chapters = book["chapters"]
+        titles = [c["title"] for c in chapters]
+        semaphore = asyncio.Semaphore(cfg["concurrency"])
+
+        async with httpx.AsyncClient(timeout=180) as client:
+            async def do_segment(idxs: list[int]) -> None:
+                try:
+                    async with semaphore:
+                        raw = await chat(client, cfg, _title_messages(
+                            [titles[i] for i in idxs], glossary, cfg["target_lang"]))
+                    parsed = _parse_segment(raw, len(idxs))
+                    for n, v in enumerate(parsed):
+                        if v:
+                            chapters[idxs[n]]["title_translated"] = v.strip() or titles[idxs[n]]
+                except Exception:
+                    pass  # 该分段失败保留原标题/旧译名
+
+            await asyncio.gather(*(do_segment(s) for s in
+                                   _group_segments(titles, cfg["max_segment_chars"])))
+
+        # epub 章节：把新标题写回已译 HTML 的标题元素
+        for ch in chapters:
+            if not ch.get("title_translated"):
+                continue
+            if (ch.get("format") or book["format"]) != "epub":
+                continue
+            dst = store.chapter_dst_path(book_id, ch["id"])
+            if not dst.exists():
+                continue
+            try:
+                soup, _, heading_el = parsing.extract_units(
+                    dst.read_text(encoding="utf-8", errors="replace"))
+                if heading_el is not None:
+                    parsing.set_el_text(heading_el, ch["title_translated"])
+                    dst.write_text(str(soup), encoding="utf-8")
+            except Exception:
+                pass
+        store.save_book(book)
+    finally:
+        _tasks.pop(book_id, None)
+
+
+def start_title_retranslate(book_id: str, scope: str) -> bool:
+    """scope: "book" 重翻书名；"toc" 重翻目录（全部章节标题）。"""
+    if is_running(book_id):
+        return False
+    coro = _retranslate_book_title(book_id) if scope == "book" else _retranslate_toc(book_id)
+    _tasks[book_id] = asyncio.create_task(coro)
+    return True

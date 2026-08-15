@@ -314,6 +314,27 @@ async def retranslate_chapter(book_id: str, chapter_id: str):
     return {"ok": True}
 
 
+@app.post("/api/books/{book_id}/title/retranslate")
+async def retranslate_title(book_id: str):
+    """重翻书名（不影响章节）。"""
+    if not store.load_book(book_id):
+        raise HTTPException(404, "书籍不存在")
+    if not translator.start_title_retranslate(book_id, "book"):
+        raise HTTPException(409, "该书已有任务在运行")
+    return {"ok": True}
+
+
+@app.post("/api/books/{book_id}/toc/retranslate")
+async def retranslate_toc(book_id: str):
+    """重翻目录（全部章节标题，不改正文）。"""
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    if not translator.start_title_retranslate(book_id, "toc"):
+        raise HTTPException(409, "该书已有任务在运行")
+    return {"ok": True}
+
+
 # ---------- 导出 ----------
 
 @app.get("/api/books/{book_id}/export")

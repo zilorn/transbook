@@ -118,6 +118,12 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
     () => api.saveGlossary(props.id, glossary()),
     '术语表已保存'
   ).then(() => setGlossaryDirty(false))
+  const copyGlossary = async () => {
+    const text = glossary().filter(t => t.src).map(t => `${t.src} => ${t.dst}`).join('\n')
+    if (!text) return
+    await navigator.clipboard.writeText(text)
+    setMsg('术语表已复制到剪贴板')
+  }
 
   // ---- 追加章节 ----
   const onAddFile = async (e: { currentTarget: HTMLInputElement }) => {
@@ -174,7 +180,18 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
         <div>
           <button class="link" onClick={props.onBack}>← 返回列表</button>
           <div>
-            <h2 class="text-[1.5em] font-bold mt-3 mb-1">{b().title_translated || b().title}</h2>
+            <div class="flex items-center gap-2 mt-3 mb-1">
+              <h2 class="text-[1.5em] font-bold m-0">{b().title_translated || b().title}</h2>
+              <button class="link p-0 inline-flex items-center" title="重翻书名"
+                disabled={busy() || b().running}
+                onClick={() => act(() => api.retranslateTitle(b().id), '正在重翻书名…')}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                  <polyline points="21 3 21 9 15 9" />
+                </svg>
+              </button>
+            </div>
             <Show when={b().title_translated && b().title_translated !== b().title}>
               <p class="text-muted text-[13px] m-0">原名：{b().title}</p>
             </Show>
@@ -202,6 +219,10 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
             <button disabled={busy() || b().running}
               onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
               生成术语表
+            </button>
+            <button disabled={busy() || b().running}
+              onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
+              重翻目录
             </button>
             <a class="inline-block px-[14px] py-[7px] border border-line rounded-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
               href={api.exportUrl(b().id, 'txt')} download="">导出 TXT</a>
@@ -286,6 +307,7 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
               <button class="primary" disabled={!glossaryDirty() || busy()} onClick={saveGlossary}>
                 保存术语表
               </button>
+              <button disabled={glossary().length === 0} onClick={copyGlossary}>复制术语表</button>
             </div>
             <table>
               <thead>

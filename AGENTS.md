@@ -83,5 +83,7 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - `POST /api/books/{id}/glossary/generate` / `PUT /api/books/{id}/glossary` — 生成 / 保存术语表
 - `POST /api/books/{id}/translate`（body: `{chapter_ids?, overwrite?}`）/ `POST .../stop`
 - `POST /api/books/{id}/chapters/{cid}/retranslate` — 单章重译
+- `POST /api/books/{id}/title/retranslate` — 重翻书名（不动章节）
+- `POST /api/books/{id}/toc/retranslate` — 重翻目录（全部章节标题；epub 已译章节的 HTML 标题元素同步更新）
 - `GET /api/books/{id}/export?fmt=txt|epub` — 导出
 - `WebDAV /webdav/` — 只读书库（PROPFIND 列出 EPUB、GET 下载），需在设置中开启

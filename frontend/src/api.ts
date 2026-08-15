@@ -73,6 +73,10 @@ export const api = {
     req(`/api/books/${id}/stop`, { method: 'POST' }),
   retranslateChapter: (id: string, cid: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}/chapters/${cid}/retranslate`, { method: 'POST' }),
+  retranslateTitle: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/books/${id}/title/retranslate`, { method: 'POST' }),
+  retranslateToc: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/books/${id}/toc/retranslate`, { method: 'POST' }),
   chapterContent: (id: string, cid: string, translated = false): Promise<string> =>
     reqText(`/api/books/${id}/chapters/${cid}/content${translated ? '?translated=true' : ''}`),
   exportUrl: (id: string, fmt: string): string => `/api/books/${id}/export?fmt=${fmt}`,
