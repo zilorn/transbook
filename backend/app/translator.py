@@ -261,6 +261,17 @@ async def translate_book(book_id: str, chapter_ids: list[str] | None = None,
     book = store.load_book(book_id)
     if not book:
         return
+    # 首次翻译（尚无译文且术语表为空）时，先生成术语表再翻译
+    if not book.get("glossary") and not any(c.get("status") == "done"
+                                            for c in book["chapters"]):
+        try:
+            await generate_glossary(book_id)
+            book = store.load_book(book_id) or book
+        except Exception:
+            # 术语表生成失败不阻塞翻译，恢复状态后继续（无术语表）
+            book["status"] = "ready"
+            book["error"] = None
+            store.save_book(book)
     cfg = store.load_config()
     stop = asyncio.Event()
     _stop_flags[book_id] = stop

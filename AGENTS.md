@@ -54,6 +54,8 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   章节标题和书名用单独的提示词翻译，不走正文分段。
 - **术语表去重**：重复生成术语时，提示词会附上已有术语让模型避开；生成结果再经
   `translator._merge_glossary` 按规范化 src（去空白、小写）去重合并，已有条目优先保留。
+- **首次翻译自动建术语表**：`translate_book` 启动时若术语表为空且尚无已译章节，
+  会先自动执行一次 `generate_glossary` 再进入翻译；生成失败不阻塞翻译（无术语表继续）。
 - **并发**：`translator.py` 中 `asyncio.Semaphore(配置并发数)` 控制全局 LLM 并发；
   章节之间并发、章节内分段并发，按索引重组，不会错乱。停止通过 `asyncio.Event` 协作式中断。
 - **txt 分章**：`parsing.CHAPTER_PATTERNS` 按优先级匹配（第X章/卷/回、Chapter N、序/尾声、
