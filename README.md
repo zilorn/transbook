@@ -1,4 +1,4 @@
-# TranLatexBook
+# TransBook
 
 通过 DeepSeek API 翻译整本书的 Web 应用：上传 epub/txt → 自动生成人名/地名/术语表（可查看编辑）→ 按章并发翻译（标题与正文分离、大章自动分段）→ 导出 epub/txt。翻译任务在本地后端执行，全部数据落盘持久化，不用数据库。
 
