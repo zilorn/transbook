@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, onMount, Show } from 'solid-js'
+import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { api } from './api'
 import type { BookSummary } from './types'
 
@@ -61,6 +61,11 @@ export default function BookList(props: { onOpen: (id: string) => void }) {
     try { setBooks(await api.books()) } catch (e: any) { setError(String(e.message || e)) }
   }
   onMount(refresh)
+  // 有书在生成术语表/翻译中时轮询刷新状态，避免徽章停留在"生成术语表中"
+  const timer = setInterval(() => {
+    if (books().some(b => b.status === 'glossary' || b.status === 'translating')) refresh()
+  }, 3000)
+  onCleanup(() => clearInterval(timer))
 
   const onUpload = async (e: { currentTarget: HTMLInputElement }) => {
     const file = e.currentTarget.files?.[0]

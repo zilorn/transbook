@@ -60,8 +60,11 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
 
   const refresh = async () => {
     try {
+      const prev = book()?.status
       const b = await api.book(props.id)
       setBook(b)
+      // 术语表生成完毕（状态从 glossary 变回 ready），更新提示
+      if (prev === 'glossary' && b.status === 'ready') setMsg('术语表已生成')
       if (!glossaryDirty()) setGlossary((b.glossary || []).map(t => ({ ...t })))
     } catch (e: any) { setError(String(e.message || e)) }
   }
