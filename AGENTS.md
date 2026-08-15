@@ -5,7 +5,7 @@
 
 ## 技术栈
 
-- 前端：Bun + SolidJS + Vite（`frontend/`）
+- 前端：Bun + SolidJS + TypeScript + TailwindCSS + Vite（`frontend/`）
 - 后端：FastAPI + uv 管理（`backend/app/`）
 - LLM：DeepSeek OpenAI 兼容接口（httpx 异步调用）
 
@@ -24,7 +24,7 @@ backend/
     translator.py  # 术语表生成 + 按章并发翻译流水线（asyncio）
   data/            # 运行时数据（书籍、译文、配置），已 gitignore
 frontend/
-  src/App.jsx  BookList.jsx  BookDetail.jsx  Settings.jsx  api.js
+  src/index.tsx  App.tsx  BookList.tsx  BookDetail.tsx  Settings.tsx  api.ts  types.ts
 ```
 
 ## 常用命令
@@ -34,6 +34,7 @@ frontend/
 uv sync                             # 安装/同步 Python 依赖（根目录执行）
 bun install                         # 安装 JS 依赖（根目录执行）
 cd frontend && bun run build        # 构建前端到 frontend/dist（后端会自动挂载为静态站）
+cd frontend && bun run typecheck    # TypeScript 类型检查（tsc --noEmit）
 uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 ```
 

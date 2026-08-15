@@ -1,23 +1,51 @@
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { api } from './api'
+import type { Book, Chapter, ChapterPreview, GlossaryTerm } from './types'
 
-const CH_STATUS = { pending: '待翻译', translating: '翻译中', done: '已完成', error: '失败' }
+const CH_STATUS: Record<string, string> = { pending: '待翻译', translating: '翻译中', done: '已完成', error: '失败' }
 
-export default function BookDetail(props) {
-  const [book, setBook] = createSignal(null)
+// 原 .badge 基础样式与 .st-* 状态色
+const BADGE_BASE = 'text-[12px] rounded-[4px] px-[7px] py-[2px]'
+const BADGE = `${BADGE_BASE} bg-[#eef0f3] text-muted`
+const STATUS_BADGE: Record<string, string> = {
+  translating: 'bg-[#dbeafe] text-[#1d4ed8]',
+  done: 'bg-[#dcfce7] text-[#166534]',
+  error: 'bg-[#fee2e2] text-[#991b1b]',
+}
+
+interface PreviewState {
+  title: string
+  format: string
+  loading: boolean
+  content: string
+  error: string
+}
+
+interface AppendChapter extends ChapterPreview {
+  checked: boolean
+}
+
+interface AppendPreview {
+  chapters: AppendChapter[]
+  existing: number
+  filename: string
+}
+
+export default function BookDetail(props: { id: string; onBack: () => void }) {
+  const [book, setBook] = createSignal<Book | null>(null)
   const [error, setError] = createSignal('')
   const [msg, setMsg] = createSignal('')
-  const [glossary, setGlossary] = createSignal([])
+  const [glossary, setGlossary] = createSignal<GlossaryTerm[]>([])
   const [glossaryDirty, setGlossaryDirty] = createSignal(false)
   const [tab, setTab] = createSignal('chapters')
   const [addTitle, setAddTitle] = createSignal('')
   const [addBody, setAddBody] = createSignal('')
   const [busy, setBusy] = createSignal(false)
-  const [preview, setPreview] = createSignal(null)
-  const [appendPrev, setAppendPrev] = createSignal(null)
+  const [preview, setPreview] = createSignal<PreviewState | null>(null)
+  const [appendPrev, setAppendPrev] = createSignal<AppendPreview | null>(null)
 
   // ---- 章节内容预览（原文/译文）----
-  const openPreview = async (c, translated) => {
+  const openPreview = async (c: Chapter, translated: boolean) => {
     setPreview({
       title: translated ? (c.title_translated || c.title) : c.title,
       format: c.format, loading: true, content: '', error: '',
@@ -25,7 +53,7 @@ export default function BookDetail(props) {
     try {
       const content = await api.chapterContent(props.id, c.id, translated)
       setPreview(p => (p ? { ...p, loading: false, content } : p))
-    } catch (e) {
+    } catch (e: any) {
       setPreview(p => (p ? { ...p, loading: false, error: String(e.message || e) } : p))
     }
   }
@@ -35,10 +63,10 @@ export default function BookDetail(props) {
       const b = await api.book(props.id)
       setBook(b)
       if (!glossaryDirty()) setGlossary((b.glossary || []).map(t => ({ ...t })))
-    } catch (e) { setError(String(e.message || e)) }
+    } catch (e: any) { setError(String(e.message || e)) }
   }
 
-  let timer
+  let timer: ReturnType<typeof setInterval>
   onMount(() => {
     refresh()
     timer = setInterval(() => {
@@ -48,7 +76,7 @@ export default function BookDetail(props) {
   })
   onCleanup(() => clearInterval(timer))
 
-  const act = async (fn, okMsg = '') => {
+  const act = async (fn: () => Promise<unknown>, okMsg = '') => {
     setBusy(true)
     setError('')
     setMsg('')
@@ -56,7 +84,7 @@ export default function BookDetail(props) {
       await fn()
       if (okMsg) setMsg(okMsg)
       await refresh()
-    } catch (e) {
+    } catch (e: any) {
       setError(String(e.message || e))
     } finally {
       setBusy(false)
@@ -64,21 +92,21 @@ export default function BookDetail(props) {
   }
 
   // ---- 术语表编辑 ----
-  const setTerm = (i, k, v) => {
+  const setTerm = <K extends keyof GlossaryTerm>(i: number, k: K, v: GlossaryTerm[K]) => {
     const g = glossary().slice()
     g[i] = { ...g[i], [k]: v }
     setGlossary(g)
     setGlossaryDirty(true)
   }
   const addTerm = () => { setGlossary([...glossary(), { src: '', dst: '', type: '术语' }]); setGlossaryDirty(true) }
-  const delTerm = (i) => { setGlossary(glossary().filter((_, n) => n !== i)); setGlossaryDirty(true) }
+  const delTerm = (i: number) => { setGlossary(glossary().filter((_, n) => n !== i)); setGlossaryDirty(true) }
   const saveGlossary = () => act(
     () => api.saveGlossary(props.id, glossary()),
     '术语表已保存'
   ).then(() => setGlossaryDirty(false))
 
   // ---- 追加章节 ----
-  const onAddFile = async (e) => {
+  const onAddFile = async (e: { currentTarget: HTMLInputElement }) => {
     const file = e.currentTarget.files?.[0]
     e.currentTarget.value = ''
     if (!file) return
@@ -92,19 +120,19 @@ export default function BookDetail(props) {
         existing: res.existing,
         filename: file.name,
       })
-    } catch (err) {
+    } catch (err: any) {
       setError(String(err.message || err))
     } finally {
       setBusy(false)
     }
   }
-  const toggleAppend = (i, checked) => {
+  const toggleAppend = (i: number, checked: boolean) => {
     setAppendPrev(p => p && ({
       ...p,
       chapters: p.chapters.map((c, n) => (n === i ? { ...c, checked } : c)),
     }))
   }
-  const setAllAppend = (checked) => {
+  const setAllAppend = (checked: boolean) => {
     setAppendPrev(p => p && ({ ...p, chapters: p.chapters.map(c => ({ ...c, checked })) }))
   }
   const confirmAppend = () => {
@@ -131,23 +159,23 @@ export default function BookDetail(props) {
       {(b) => (
         <div>
           <button class="link" onClick={props.onBack}>← 返回列表</button>
-          <div class="book-head">
-            <h2>{b().title_translated || b().title}</h2>
+          <div>
+            <h2 class="text-[1.5em] font-bold mt-3 mb-1">{b().title_translated || b().title}</h2>
             <Show when={b().title_translated && b().title_translated !== b().title}>
-              <p class="book-sub">原名：{b().title}</p>
+              <p class="text-muted text-[13px] m-0">原名：{b().title}</p>
             </Show>
-            <div class="book-meta">
-              <span class="badge">{b().format}</span>
-              <span class="badge">{doneCount()}/{b().chapters.length} 章</span>
-              <span class="badge">状态：{b().status}{b().running ? '（运行中）' : ''}</span>
+            <div class="flex gap-1.5 flex-wrap my-2">
+              <span class={BADGE}>{b().format}</span>
+              <span class={BADGE}>{doneCount()}/{b().chapters.length} 章</span>
+              <span class={BADGE}>状态：{b().status}{b().running ? '（运行中）' : ''}</span>
             </div>
-            <div class="progress big">
-              <div class="progress-bar"
+            <div class="h-2.5 bg-[#e5e7eb] rounded-[3px] overflow-hidden my-2">
+              <div class="h-full bg-primary transition-[width] duration-[0.4s]"
                 style={{ width: `${b().chapters.length ? (doneCount() / b().chapters.length) * 100 : 0}%` }} />
             </div>
           </div>
 
-          <div class="toolbar wrap">
+          <div class="flex gap-2.5 my-4 items-center flex-wrap">
             <button class="primary" disabled={busy() || b().running}
               onClick={() => act(() => api.translate(b().id))}>
               {doneCount() > 0 ? '继续翻译未完成章节' : '开始翻译'}
@@ -161,27 +189,32 @@ export default function BookDetail(props) {
               onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
               生成术语表
             </button>
-            <a class="btn" href={api.exportUrl(b().id, 'txt')} download>导出 TXT</a>
-            <a class="btn" href={api.exportUrl(b().id, 'epub')} download>导出 EPUB</a>
+            <a class="inline-block px-[14px] py-[7px] border border-line rounded-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
+              href={api.exportUrl(b().id, 'txt')} download="">导出 TXT</a>
+            <a class="inline-block px-[14px] py-[7px] border border-line rounded-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
+              href={api.exportUrl(b().id, 'epub')} download="">导出 EPUB</a>
           </div>
-          {error() && <p class="error">{error()}</p>}
-          {msg() && <p class="ok-msg">{msg()}</p>}
-          {b().error && <p class="error">{b().error}</p>}
+          {error() && <p class="text-danger text-[13px]">{error()}</p>}
+          {msg() && <p class="text-[#166534] text-[13px]">{msg()}</p>}
+          {b().error && <p class="text-danger text-[13px]">{b().error}</p>}
 
-          <div class="tabs">
-            <button class={tab() === 'chapters' ? 'active' : ''} onClick={() => setTab('chapters')}>
+          <div class="flex gap-1 border-b border-line mt-[18px] mb-3">
+            <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'chapters' ? 'border-b-2 border-primary text-primary' : ''}`}
+              onClick={() => setTab('chapters')}>
               章节（{b().chapters.length}）
             </button>
-            <button class={tab() === 'glossary' ? 'active' : ''} onClick={() => setTab('glossary')}>
+            <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'glossary' ? 'border-b-2 border-primary text-primary' : ''}`}
+              onClick={() => setTab('glossary')}>
               术语表（{glossary().length}）{glossaryDirty() ? ' *' : ''}
             </button>
-            <button class={tab() === 'add' ? 'active' : ''} onClick={() => setTab('add')}>
+            <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'add' ? 'border-b-2 border-primary text-primary' : ''}`}
+              onClick={() => setTab('add')}>
               追加章节
             </button>
           </div>
 
           <Show when={tab() === 'chapters'}>
-            <table class="chapters">
+            <table>
               <thead>
                 <tr><th>#</th><th>原标题</th><th>译后标题</th><th>状态</th><th></th></tr>
               </thead>
@@ -191,18 +224,20 @@ export default function BookDetail(props) {
                     <tr>
                       <td>{i() + 1}</td>
                       <td>
-                        <button class="link ch-title" title="预览原文"
+                        <button class="link p-0 text-left text-[14px]" title="预览原文"
                           onClick={() => openPreview(c, false)}>{c.title}</button>
                       </td>
                       <td>
                         <Show when={c.title_translated} fallback="—">
-                          <button class="link ch-title" title="预览译文"
+                          <button class="link p-0 text-left text-[14px]" title="预览译文"
                             onClick={() => openPreview(c, true)}>{c.title_translated}</button>
                         </Show>
                       </td>
                       <td>
-                        <span class={`badge st-${c.status}`}>{CH_STATUS[c.status] || c.status}</span>
-                        <Show when={c.error}><div class="error small-text">{c.error}</div></Show>
+                        <span class={`${BADGE_BASE} ${STATUS_BADGE[c.status] ?? 'bg-[#eef0f3] text-muted'}`}>
+                          {CH_STATUS[c.status] || c.status}
+                        </span>
+                        <Show when={c.error}><div class="text-danger text-[12px]">{c.error}</div></Show>
                       </td>
                       <td>
                         <button class="small" disabled={busy() || b().running}
@@ -218,13 +253,13 @@ export default function BookDetail(props) {
           </Show>
 
           <Show when={tab() === 'glossary'}>
-            <div class="toolbar">
+            <div class="flex gap-2.5 my-4 items-center">
               <button onClick={addTerm}>+ 添加词条</button>
               <button class="primary" disabled={!glossaryDirty() || busy()} onClick={saveGlossary}>
                 保存术语表
               </button>
             </div>
-            <table class="glossary">
+            <table>
               <thead>
                 <tr><th>原文</th><th>译名</th><th>类型</th><th></th></tr>
               </thead>
@@ -232,10 +267,13 @@ export default function BookDetail(props) {
                 <For each={glossary()}>
                   {(t, i) => (
                     <tr>
-                      <td><input value={t.src} onInput={(e) => setTerm(i(), 'src', e.currentTarget.value)} /></td>
-                      <td><input value={t.dst} onInput={(e) => setTerm(i(), 'dst', e.currentTarget.value)} /></td>
+                      <td><input class="w-full px-2 py-[5px] border border-line rounded-[4px] text-[14px]"
+                        value={t.src} onInput={(e) => setTerm(i(), 'src', e.currentTarget.value)} /></td>
+                      <td><input class="w-full px-2 py-[5px] border border-line rounded-[4px] text-[14px]"
+                        value={t.dst} onInput={(e) => setTerm(i(), 'dst', e.currentTarget.value)} /></td>
                       <td>
-                        <select value={t.type} onChange={(e) => setTerm(i(), 'type', e.currentTarget.value)}>
+                        <select class="w-full px-2 py-[5px] border border-line rounded-[4px] text-[14px]"
+                          value={t.type} onChange={(e) => setTerm(i(), 'type', e.currentTarget.value)}>
                           <option>人名</option><option>地名</option><option>组织</option><option>术语</option>
                         </select>
                       </td>
@@ -246,21 +284,23 @@ export default function BookDetail(props) {
               </tbody>
             </table>
             <Show when={glossary().length === 0}>
-              <p class="empty">术语表为空，可点击"生成术语表"自动抽取，或手动添加。</p>
+              <p class="text-muted text-center py-[30px]">术语表为空，可点击"生成术语表"自动抽取，或手动添加。</p>
             </Show>
           </Show>
 
           <Show when={tab() === 'add'}>
-            <div class="add-chapters">
-              <h3>上传文件追加</h3>
-              <label class={`upload-btn ${busy() ? 'disabled' : ''}`}>
+            <div>
+              <h3 class="text-[15px] font-bold mt-[18px] mb-2">上传文件追加</h3>
+              <label class={`inline-block px-4 py-2 border border-dashed border-primary rounded-[6px] text-primary cursor-pointer bg-[#eff6ff] ${busy() ? 'opacity-50' : ''}`}>
                 选择 .txt / .epub 文件（解析后勾选要追加的章节）
                 <input type="file" accept=".epub,.txt" hidden disabled={busy()} onChange={onAddFile} />
               </label>
-              <h3>粘贴文本追加</h3>
-              <input class="add-title" placeholder="章节名称（必填）"
+              <h3 class="text-[15px] font-bold mt-[18px] mb-2">粘贴文本追加</h3>
+              <input class="w-full px-2.5 py-2 border border-line rounded-[6px] text-[14px] mt-2"
+                placeholder="章节名称（必填）"
                 value={addTitle()} onInput={(e) => setAddTitle(e.currentTarget.value)} />
               <textarea rows="10" placeholder="章节正文（必填）"
+                class="w-full p-2.5 border border-line rounded-[6px] text-[14px] my-2 font-[inherit] resize-y"
                 value={addBody()} onInput={(e) => setAddBody(e.currentTarget.value)} />
               <button class="primary" disabled={busy() || !addTitle().trim() || !addBody().trim()}
                 onClick={onAddText}>
@@ -271,41 +311,43 @@ export default function BookDetail(props) {
 
           <Show when={appendPrev()}>
             {(ap) => (
-              <div class="modal-mask" onClick={() => setAppendPrev(null)}>
-                <div class="modal append" onClick={(e) => e.stopPropagation()}>
-                  <h2>确认追加章节</h2>
-                  <p class="append-info">
+              <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-10"
+                onClick={() => setAppendPrev(null)}>
+                <div class="bg-card rounded-[10px] p-[22px] max-w-[92vw] w-[640px] max-h-[84vh] flex flex-col"
+                  onClick={(e) => e.stopPropagation()}>
+                  <h2 class="mb-3.5 text-[18px] font-bold">确认追加章节</h2>
+                  <p class="text-muted text-[13px] m-0 mb-1">
                     {ap().filename} 解析出 {ap().chapters.length} 章，本书已有 {ap().existing} 章。
                     与已有章节重复的不默认勾选。
                   </p>
-                  <div class="toolbar">
+                  <div class="flex gap-2.5 my-4 items-center">
                     <button class="small" onClick={() => setAllAppend(true)}>全选</button>
                     <button class="small" onClick={() => setAllAppend(false)}>全不选</button>
                   </div>
-                  <div class="append-list">
+                  <div class="overflow-y-auto flex-1 border border-line rounded-[6px]">
                     <For each={ap().chapters}>
                       {(c, i) => (
-                        <label class="append-item">
-                          <input type="checkbox" checked={c.checked}
+                        <label class="flex gap-2.5 items-start px-2.5 py-2 border-b border-line cursor-pointer text-[14px] text-text last:border-b-0">
+                          <input type="checkbox" class="mt-[3px]" checked={c.checked}
                             onChange={(e) => toggleAppend(i(), e.currentTarget.checked)} />
-                          <div class="append-item-main">
+                          <div class="flex-1 min-w-0">
                             <div>
-                              <span class="append-item-title">{c.title}</span>
-                              <span class="badge">{c.format}</span>
-                              <span class="badge">{c.chars} 字</span>
+                              <span class="font-medium mr-1.5 break-all">{c.title}</span>
+                              <span class={`${BADGE} mr-1`}>{c.format}</span>
+                              <span class={`${BADGE} mr-1`}>{c.chars} 字</span>
                               <Show when={c.duplicate}>
-                                <span class="badge st-error">与已有章节重复</span>
+                                <span class={`${BADGE_BASE} mr-1 ${STATUS_BADGE.error}`}>与已有章节重复</span>
                               </Show>
                             </div>
                             <Show when={c.snippet}>
-                              <div class="snippet">{c.snippet}</div>
+                              <div class="text-muted text-[12px] mt-[3px] truncate">{c.snippet}</div>
                             </Show>
                           </div>
                         </label>
                       )}
                     </For>
                   </div>
-                  <div class="modal-actions">
+                  <div class="flex justify-end gap-2.5 mt-2">
                     <button onClick={() => setAppendPrev(null)}>取消</button>
                     <button class="primary"
                       disabled={busy() || !ap().chapters.some(c => c.checked)}
@@ -320,17 +362,20 @@ export default function BookDetail(props) {
 
           <Show when={preview()}>
             {(p) => (
-              <div class="modal-mask" onClick={() => setPreview(null)}>
-                <div class="modal preview" onClick={(e) => e.stopPropagation()}>
-                  <div class="preview-head">
-                    <h2>{p().title}</h2>
+              <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-10"
+                onClick={() => setPreview(null)}>
+                <div class="bg-card rounded-[10px] p-[22px] max-w-[92vw] w-[760px] max-h-[84vh] flex flex-col"
+                  onClick={(e) => e.stopPropagation()}>
+                  <div class="flex justify-between items-start gap-3">
+                    <h2 class="mb-3 text-[17px] font-bold break-all">{p().title}</h2>
                     <button class="small" onClick={() => setPreview(null)}>关闭</button>
                   </div>
-                  <div class="preview-body">
-                    <Show when={!p().loading} fallback={<p class="empty">加载中…</p>}>
-                      <Show when={!p().error} fallback={<p class="error">{p().error}</p>}>
-                        <Show when={p().format === 'epub'} fallback={<pre>{p().content}</pre>}>
-                          <div class="preview-html" innerHTML={p().content} />
+                  <div class="overflow-auto flex-1">
+                    <Show when={!p().loading} fallback={<p class="text-muted text-center py-[30px]">加载中…</p>}>
+                      <Show when={!p().error} fallback={<p class="text-danger text-[13px]">{p().error}</p>}>
+                        <Show when={p().format === 'epub'}
+                          fallback={<pre class="m-0 whitespace-pre-wrap break-words font-[inherit] text-[14px] leading-[1.7]">{p().content}</pre>}>
+                          <div class="preview-html text-[14px] leading-[1.7]" innerHTML={p().content} />
                         </Show>
                       </Show>
                     </Show>

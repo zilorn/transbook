@@ -1,146 +1,109 @@
-:root {
-  --bg: #f6f7f9;
-  --card: #fff;
-  --line: #e2e5ea;
-  --text: #24292f;
-  --muted: #6b7280;
-  --primary: #2563eb;
-  --danger: #dc2626;
-  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #f6f7f9;
+  --color-card: #ffffff;
+  --color-line: #e2e5ea;
+  --color-text: #24292f;
+  --color-muted: #6b7280;
+  --color-primary: #2563eb;
+  --color-danger: #dc2626;
+  --font-sans: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
 }
 
-* { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--text); }
+/*
+ * 全局元素选择器样式保留在 base 层（原生 CSS 值，与原 index.css 一致）。
+ * 组件级 class 已迁移为 JSX 中的 Tailwind 工具类。
+ * 说明：Tailwind preflight 会重置标题字重/字号与段落外边距，原样式依赖浏览器
+ * 默认表现（h1/h2 加粗、p 的 1em 外边距），这里显式补回以保持视觉不变。
+ */
+@layer base {
+  body {
+    margin: 0;
+    background: #f6f7f9;
+    color: #24292f;
+  }
 
-.app { max-width: 960px; margin: 0 auto; padding: 0 16px 60px; }
+  p {
+    margin: 1em 0;
+  }
 
-header {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 16px 0; border-bottom: 1px solid var(--line);
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 0;
+    border-bottom: 1px solid #e2e5ea;
+  }
+  header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  button {
+    padding: 7px 14px;
+    border: 1px solid #e2e5ea;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #24292f;
+    cursor: pointer;
+    font-size: 14px;
+    text-decoration: none;
+    display: inline-block;
+  }
+  button:hover:not(:disabled) {
+    border-color: #2563eb;
+    color: #2563eb;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  button.primary {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+  }
+  button.primary:hover:not(:disabled) {
+    color: #fff;
+    opacity: 0.9;
+  }
+  button.danger {
+    color: #dc2626;
+  }
+  button.small {
+    padding: 3px 10px;
+    font-size: 12px;
+  }
+  button.link {
+    border: none;
+    background: none;
+    color: #2563eb;
+    padding: 4px 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #ffffff;
+  }
+  th,
+  td {
+    text-align: left;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e2e5ea;
+    font-size: 14px;
+    vertical-align: top;
+  }
+  th {
+    color: #6b7280;
+    font-weight: 500;
+    font-size: 13px;
+  }
+
+  /* epub 译文 HTML 内的图片不超出预览容器 */
+  .preview-html img {
+    max-width: 100%;
+  }
 }
-header h1 { font-size: 20px; margin: 0; }
-.header-right { display: flex; align-items: center; gap: 10px; }
-.key-badge { font-size: 12px; padding: 3px 8px; border-radius: 10px; }
-.key-badge.ok { background: #dcfce7; color: #166534; }
-.key-badge.warn { background: #fee2e2; color: #991b1b; }
-
-button, .btn {
-  padding: 7px 14px; border: 1px solid var(--line); border-radius: 6px;
-  background: var(--card); color: var(--text); cursor: pointer; font-size: 14px;
-  text-decoration: none; display: inline-block;
-}
-button:hover:not(:disabled), .btn:hover { border-color: var(--primary); color: var(--primary); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
-button.primary:hover:not(:disabled) { color: #fff; opacity: 0.9; }
-button.danger { color: var(--danger); }
-button.small, .btn.small { padding: 3px 10px; font-size: 12px; }
-button.link { border: none; background: none; color: var(--primary); padding: 4px 0; }
-
-.toolbar { display: flex; gap: 10px; margin: 16px 0; align-items: center; }
-.toolbar.wrap { flex-wrap: wrap; }
-
-.upload-btn {
-  display: inline-block; padding: 8px 16px; border: 1px dashed var(--primary);
-  border-radius: 6px; color: var(--primary); cursor: pointer; background: #eff6ff;
-}
-.upload-btn.disabled { opacity: 0.5; }
-
-.book-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.book-card {
-  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-  padding: 14px; cursor: pointer;
-}
-.book-card:hover { border-color: var(--primary); }
-.book-title { font-weight: 600; margin-bottom: 4px; word-break: break-all; }
-.book-sub { color: var(--muted); font-size: 13px; }
-.book-meta { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
-
-.badge {
-  font-size: 12px; background: #eef0f3; border-radius: 4px; padding: 2px 7px; color: var(--muted);
-}
-.badge.st-done { background: #dcfce7; color: #166534; }
-.badge.st-error { background: #fee2e2; color: #991b1b; }
-.badge.st-translating { background: #dbeafe; color: #1d4ed8; }
-
-.progress { height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; margin: 8px 0; }
-.progress-bar { height: 100%; background: var(--primary); transition: width 0.4s; }
-.progress.big { height: 10px; }
-
-.book-head h2 { margin: 12px 0 4px; }
-.book-head .book-sub { margin: 0; }
-
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 18px 0 12px; }
-.tabs button { border: none; background: none; padding: 8px 14px; border-radius: 0; }
-.tabs button.active { border-bottom: 2px solid var(--primary); color: var(--primary); }
-
-table { width: 100%; border-collapse: collapse; background: var(--card); }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 14px; vertical-align: top; }
-th { color: var(--muted); font-weight: 500; font-size: 13px; }
-
-.glossary input, .glossary select {
-  width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; font-size: 14px;
-}
-
-.add-chapters textarea {
-  width: 100%; padding: 10px; border: 1px solid var(--line); border-radius: 6px;
-  font-size: 14px; margin: 8px 0; font-family: inherit; resize: vertical;
-}
-.add-chapters h3 { font-size: 15px; margin: 18px 0 8px; }
-.add-chapters .add-title {
-  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
-  font-size: 14px; margin: 8px 0 0;
-}
-
-.modal.append { width: 640px; max-height: 84vh; display: flex; flex-direction: column; }
-.append-info { color: var(--muted); font-size: 13px; margin: 0 0 4px; }
-.append-list { overflow-y: auto; flex: 1; border: 1px solid var(--line); border-radius: 6px; }
-.modal.append label.append-item {
-  display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px;
-  margin-bottom: 0; border-bottom: 1px solid var(--line); cursor: pointer;
-  font-size: 14px; color: var(--text);
-}
-.modal.append label.append-item:last-child { border-bottom: none; }
-.modal.append input[type="checkbox"] { width: auto; margin-top: 3px; }
-.append-item-main { flex: 1; min-width: 0; }
-.append-item-title { font-weight: 500; margin-right: 6px; word-break: break-all; }
-.append-item .badge { margin-right: 4px; }
-.append-item .snippet {
-  color: var(--muted); font-size: 12px; margin-top: 3px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.modal-mask {
-  position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4);
-  display: flex; align-items: center; justify-content: center; z-index: 10;
-}
-.modal {
-  background: var(--card); border-radius: 10px; padding: 22px; width: 420px; max-width: 92vw;
-}
-.modal h2 { margin: 0 0 14px; font-size: 18px; }
-.modal label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--muted); }
-.modal input {
-  width: 100%; margin-top: 4px; padding: 7px 10px; border: 1px solid var(--line);
-  border-radius: 6px; font-size: 14px;
-}
-.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
-
-.ch-title { padding: 0; text-align: left; font-size: 14px; }
-
-.modal.preview {
-  width: 760px; max-height: 84vh; display: flex; flex-direction: column;
-}
-.preview-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-.preview-head h2 { margin: 0 0 12px; font-size: 17px; word-break: break-all; }
-.preview-body { overflow: auto; flex: 1; }
-.preview-body pre {
-  margin: 0; white-space: pre-wrap; word-break: break-word;
-  font-family: inherit; font-size: 14px; line-height: 1.7;
-}
-.preview-html { font-size: 14px; line-height: 1.7; }
-.preview-html img { max-width: 100%; }
-
-.error { color: var(--danger); font-size: 13px; }
-.small-text { font-size: 12px; }
-.ok-msg { color: #166534; font-size: 13px; }
-.empty { color: var(--muted); text-align: center; padding: 30px 0; }
