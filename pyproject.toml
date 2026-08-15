@@ -1,0 +1,16 @@
+[project]
+name = "tranlatexbook"
+version = "0.1.0"
+description = "Book translation web app backend (epub/txt -> DeepSeek -> epub/txt)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "ebooklib>=0.18",
+    "beautifulsoup4>=4.12",
+    "python-multipart>=0.0.9",
+]
+
+[tool.uv]
+package = false

@@ -1,0 +1,11 @@
+{
+  "name": "tranlatexbook",
+  "private": true,
+  "workspaces": [
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "bun --cwd frontend run dev",
+    "build": "bun --cwd frontend run build"
+  }
+}
