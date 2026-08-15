@@ -5,6 +5,7 @@ import type {
   Config,
   GlossaryTerm,
   NewChapter,
+  QueueStatus,
   TranslateOptions,
 } from './types'
 
@@ -71,6 +72,21 @@ export const api = {
     }),
   stop: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}/stop`, { method: 'POST' }),
+  queue: (): Promise<{ running: boolean; entries: { book_id: string; overwrite: boolean }[] }> =>
+    req('/api/queue'),
+  enqueue: (id: string, overwrite = false): Promise<{ ok: boolean }> =>
+    req('/api/queue', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ book_id: id, overwrite }),
+    }),
+  dequeue: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/queue/${id}`, { method: 'DELETE' }),
+  startQueue: (): Promise<{ ok: boolean }> =>
+    req('/api/queue/start', { method: 'POST' }),
+  stopQueue: (): Promise<{ ok: boolean }> =>
+    req('/api/queue/stop', { method: 'POST' }),
+  queueStatus: (): Promise<QueueStatus> => req('/api/queue/status'),
   retranslateChapter: (id: string, cid: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}/chapters/${cid}/retranslate`, { method: 'POST' }),
   retranslateTitle: (id: string): Promise<{ ok: boolean }> =>

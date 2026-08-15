@@ -17,15 +17,18 @@ package.json / bun.lock      # JS 依赖（workspaces: frontend），锁定在�
 start.sh                     # 一键启动前后端，Ctrl+C 全部停止
 backend/
   app/
-    main.py        # FastAPI 路由（配置/书籍/章节追加/术语表/翻译控制/导出）
-    store.py       # 持久化：data/config.json 与 data/books/<id>/book.json
+    main.py        # FastAPI 路由（配置/书籍/章节追加/术语表/翻译控制/翻译队列/导出）
+    store.py       # 持久化：data/config.json、data/queue.json 与 data/books/<id>/book.json
     parsing.py     # txt 正则分章、epub 解析/生成、HTML 翻译单元抽取
-    deepseek.py    # DeepSeek API 客户端
-    translator.py  # 术语表生成 + 按章并发翻译流水线（asyncio）
+    deepseek.py    # DeepSeek API 客户端（chat 支持按 KeyPool 条目调用）
+    translator.py  # 术语表生成 + KeyPool 多 key 并发翻译流水线 + 队列执行器（asyncio）
     webdav.py      # 只读 WebDAV（/webdav/）：有译文的书打包 EPUB 暴露给阅读软件
-  data/            # 运行时数据（书籍、译文、配置），已 gitignore
+  data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
-  src/index.tsx  App.tsx  BookList.tsx  BookDetail.tsx  Settings.tsx  api.ts  types.ts
+  src/index.tsx  App.tsx（HashRouter + 侧边栏布局）  state.ts（全局 config/设置弹窗信号）
+  BookList.tsx  BookDetail.tsx  TranslatePage.tsx  Settings.tsx  api.ts  types.ts
+  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列；用 HashRouter 是因后端
+  StaticFiles 无 SPA 回退，history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
 ```
 
 ## 常用命令
@@ -49,15 +52,26 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   写 JSON 用临时文件 + replace 原子替换（`store._write_json`）。
 - **章节格式**：每章带 `format`（`txt`/`epub`），允许混合（追加章节时可能不同）。
   epub 章节的正文保存完整 HTML，翻译时只替换叶子块级元素的文本，结构保持不变。
-- **翻译协议**：正文按段落切成翻译单元，再按 `max_segment_chars` 分组，发给模型时带
-  `【N】` 编号标记，响应按编号解析回原文位置；缺失编号重试一次，仍缺失则保留原文。
-  章节标题和书名用单独的提示词翻译，不走正文分段。
+- **翻译协议**：正文按段落切成翻译单元，再按 `max_segment_chars` 分组（默认 8000，
+  分段数尽量少），发给模型时带 `【N】` 编号标记，响应按编号解析回原文位置；
+  缺失编号重试一次，仍缺失则保留原文。章节标题和书名用单独的提示词翻译，不走正文分段。
+  翻译中的章节实时维护 `seg_total`/`seg_done`（正文分段数 + 1 个标题段），供前端做分段进度可视化。
+- **多 API Key**：`config.api_keys` 为 `[{key, model, concurrency}]`，`model` 空 /
+  `concurrency` 0 表示跟随统一的 `model`/`concurrency`；旧单 `api_key` 配置读取时自动迁移。
+  配置接口对 key 脱敏返回（前 6 位 + `...`），原样回传时按位置回代原值。
 - **术语表去重**：重复生成术语时，提示词会附上已有术语让模型避开；生成结果再经
   `translator._merge_glossary` 按规范化 src（去空白、小写）去重合并，已有条目优先保留。
 - **首次翻译自动建术语表**：`translate_book` 启动时若术语表为空且尚无已译章节，
   会先自动执行一次 `generate_glossary` 再进入翻译；生成失败不阻塞翻译（无术语表继续）。
-- **并发**：`translator.py` 中 `asyncio.Semaphore(配置并发数)` 控制全局 LLM 并发；
+- **并发**：`translator.KeyPool` 把每个 key 按自身并发数放入 `asyncio.Queue` 槽位，
+  取用即占用、归还即释放，请求按 key 自动分摊，总并发 = 各 key 有效并发之和。
   章节之间并发、章节内分段并发，按索引重组，不会错乱。停止通过 `asyncio.Event` 协作式中断。
+  注意每次翻译任务（含手动单章重译）各自建池，并行任务的总并发会叠加。
+- **翻译队列**：`data/queue.json` 持久化 `[{book_id, chapter_ids, overwrite, added_at}]`，
+  同书重复入队时替换旧条目。`translator._run_queue` 逐本顺序执行（书内仍并发），
+  完成出队；停止时当前书保留在队列中，下次"一键开始"可继续。详情页的"排队翻译"只入队，
+  统一在翻译队列页（`TranslatePage.tsx`）启动/停止并做进度可视化（每书一个可折叠收纳盒，
+  章节小方块灰/蓝/绿/红四态 + 方块下方分段进度条）。
 - **txt 分章**：`parsing.CHAPTER_PATTERNS` 按优先级匹配（第X章/卷/回、Chapter N、序/尾声、
   纯数字编号等），数值型要求至少出现 2 次才采用；识别不到则整本作为一章。
   txt 解码依次尝试 utf-8 → gb18030 → utf-16 → latin-1。
@@ -73,7 +87,8 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 
 ## API 一览
 
-- `GET/PUT /api/config` — 设置（api_key、base_url、model、target_lang、concurrency、max_segment_chars）
+- `GET/PUT /api/config` — 设置（api_keys 多 Key（各可带 model/concurrency，空/0 跟随统一）、
+  base_url、model、target_lang、concurrency、max_segment_chars）
 - `POST /api/books` — 上传 epub/txt（multipart）
 - `GET /api/books` / `GET /api/books/{id}` / `DELETE /api/books/{id}`
 - `POST /api/books/{id}/chapters/preview` — 解析待追加的 txt/epub（multipart），
@@ -82,6 +97,9 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   粘贴文本走单章；文件追加由 preview 勾选后回传）
 - `POST /api/books/{id}/glossary/generate` / `PUT /api/books/{id}/glossary` — 生成 / 保存术语表
 - `POST /api/books/{id}/translate`（body: `{chapter_ids?, overwrite?}`）/ `POST .../stop`
+- `GET/POST /api/queue`、`DELETE /api/queue/{book_id}` — 翻译队列查看/入队（同书替换）/移除
+- `POST /api/queue/start` / `POST /api/queue/stop` — 一键开始 / 停止队列（逐本顺序执行）
+- `GET /api/queue/status` — 队列 + 每书章节状态与分段进度（seg_total/seg_done），翻译页 2s 轮询
 - `POST /api/books/{id}/chapters/{cid}/retranslate` — 单章重译
 - `POST /api/books/{id}/title/retranslate` — 重翻书名（不动章节）
 - `POST /api/books/{id}/toc/retranslate` — 重翻目录（全部章节标题；epub 已译章节的 HTML 标题元素同步更新）

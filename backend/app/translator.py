@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from contextlib import asynccontextmanager
 
 import httpx
 
@@ -15,6 +16,47 @@ _tasks: dict[str, asyncio.Task] = {}
 _stop_flags: dict[str, asyncio.Event] = {}
 
 MARK_RE = re.compile(r"【\s*(\d+)\s*】")
+
+
+# ---------------- 多 API Key 并发池 ----------------
+
+def effective_keys(cfg: dict) -> list[dict]:
+    """解析出实际生效的 key 列表：model/concurrency 为空时跟随统一配置；
+    没有 api_keys 时回落到旧的单 api_key 配置。"""
+    keys = []
+    for k in cfg.get("api_keys") or []:
+        if k.get("key"):
+            keys.append({
+                "key": k["key"],
+                "model": k.get("model") or cfg.get("model") or "deepseek-chat",
+                "concurrency": max(1, int(k.get("concurrency") or cfg.get("concurrency") or 5)),
+            })
+    if not keys and cfg.get("api_key"):
+        keys.append({"key": cfg["api_key"],
+                     "model": cfg.get("model") or "deepseek-chat",
+                     "concurrency": max(1, int(cfg.get("concurrency") or 5))})
+    return keys
+
+
+class KeyPool:
+    """多 API Key 并发池：每个 key 按自身并发数放入对应数量的槽位，
+    取用即占用、归还即释放，天然按 key 分摊请求。"""
+
+    def __init__(self, cfg: dict):
+        self._q: asyncio.Queue = asyncio.Queue()
+        for e in effective_keys(cfg):
+            for _ in range(e["concurrency"]):
+                self._q.put_nowait(e)
+        if self._q.empty():
+            raise DeepSeekError("未配置 API Key，请先在设置中添加")
+
+    @asynccontextmanager
+    async def slot(self):
+        entry = await self._q.get()
+        try:
+            yield entry
+        finally:
+            self._q.put_nowait(entry)
 
 
 # ---------------- 提示词 ----------------
@@ -151,10 +193,12 @@ async def generate_glossary(book_id: str) -> dict:
     store.save_book(book)
     try:
         existing = book.get("glossary") or []
+        pool = KeyPool(cfg)
         async with httpx.AsyncClient(timeout=180) as client:
-            raw = await chat(client, cfg,
-                             _glossary_messages(sample, cfg["target_lang"], existing),
-                             json_mode=True)
+            async with pool.slot() as k:
+                raw = await chat(client, cfg,
+                                 _glossary_messages(sample, cfg["target_lang"], existing),
+                                 json_mode=True, key=k)
         data = json.loads(raw)
         terms = data.get("terms") or data.get("glossary") or []
         if isinstance(terms, dict):
@@ -183,73 +227,102 @@ def stop_translation(book_id: str) -> None:
         flag.set()
 
 
-async def _translate_units(client, cfg, semaphore, stop, units: list[str],
-                           glossary: list[dict]) -> list[str]:
-    """把一组文本单元分段并发翻译，返回与 units 等长的译文列表。"""
+async def _translate_units(client, cfg, pool: KeyPool, stop, units: list[str],
+                           glossary: list[dict], on_progress=None) -> list[str]:
+    """把一组文本单元分段并发翻译，返回与 units 等长的译文列表。
+    on_progress(done, total)：每完成一个分段回调一次（用于进度可视化）。"""
     result: list[str | None] = [None] * len(units)
     segments = _group_segments(units, cfg["max_segment_chars"])
+    done_segs = 0
+    if on_progress:
+        on_progress(0, len(segments))
 
     async def do_segment(idxs: list[int]) -> None:
-        if stop.is_set():
-            return
-        prompt = _format_segment(idxs, units)
-        async with semaphore:
-            for attempt in range(2):
-                if stop.is_set():
-                    return
-                raw = await chat(client, cfg,
-                                 _translate_messages(prompt, glossary, cfg["target_lang"]),
-                                 retries=1)
-                parsed = _parse_segment(raw, len(idxs))
-                missing = [n for n, v in enumerate(parsed) if v is None]
-                if not missing:
+        nonlocal done_segs
+        try:
+            if stop.is_set():
+                return
+            prompt = _format_segment(idxs, units)
+            async with pool.slot() as k:
+                for attempt in range(2):
+                    if stop.is_set():
+                        return
+                    raw = await chat(client, cfg,
+                                     _translate_messages(prompt, glossary, cfg["target_lang"]),
+                                     retries=1, key=k)
+                    parsed = _parse_segment(raw, len(idxs))
+                    missing = [n for n, v in enumerate(parsed) if v is None]
+                    if not missing:
+                        for n, v in enumerate(parsed):
+                            result[idxs[n]] = v
+                        return
+                    # 有部分缺失：保留已解析的，重试缺失部分
                     for n, v in enumerate(parsed):
-                        result[idxs[n]] = v
-                    return
-                # 有部分缺失：保留已解析的，重试缺失部分
+                        if v is not None:
+                            result[idxs[n]] = v
+                    if attempt == 0:
+                        idxs = [idxs[n] for n in missing]
+                        prompt = _format_segment(idxs, units)
+                # 重试仍失败：保留原文
                 for n, v in enumerate(parsed):
-                    if v is not None:
-                        result[idxs[n]] = v
-                if attempt == 0:
-                    idxs = [idxs[n] for n in missing]
-                    prompt = _format_segment(idxs, units)
-            # 重试仍失败：保留原文
-            for n, v in enumerate(parsed):
-                if v is None and result[idxs[n]] is None:
-                    result[idxs[n]] = units[idxs[n]]
+                    if v is None and result[idxs[n]] is None:
+                        result[idxs[n]] = units[idxs[n]]
+        finally:
+            done_segs += 1
+            if on_progress:
+                on_progress(done_segs, len(segments))
 
     await asyncio.gather(*(do_segment(s) for s in segments))
     return [r if r is not None else u for r, u in zip(result, units)]
 
 
-async def _translate_chapter(client, cfg, semaphore, stop, book: dict, ch: dict) -> None:
+async def _translate_chapter(client, cfg, pool: KeyPool, stop, book: dict, ch: dict) -> None:
     book_id = book["id"]
     src = store.chapter_src_path(book_id, ch["id"]).read_text(encoding="utf-8", errors="replace")
     glossary = book.get("glossary") or []
     target_lang = cfg["target_lang"]
 
+    # 先抽取正文单元，分段总数（正文段 + 1 个标题段）用于进度展示
+    is_epub = (ch.get("format") or book["format"]) == "epub"
+    soup = heading_el = None
+    if is_epub:
+        soup, units, heading_el = parsing.extract_units(src)
+        texts = [t for _, t in units]
+    else:
+        units = None
+        texts = [p.strip() for p in re.split(r"\n+", src) if p.strip()]
+    body_segs = len(_group_segments(texts, cfg["max_segment_chars"])) if texts else 0
+    ch["seg_total"] = body_segs + 1
+    ch["seg_done"] = 0
+    store.save_book(book)
+
+    def on_seg_done(d: int, _t: int) -> None:
+        ch["seg_done"] = d + 1  # +1 为标题段
+        store.save_book(book)
+
     # 章节标题单独翻译
     if stop.is_set():
         return
-    async with semaphore:
-        raw_title = await chat(client, cfg, _title_messages([ch["title"]], glossary, target_lang))
+    async with pool.slot() as k:
+        raw_title = await chat(client, cfg, _title_messages([ch["title"]], glossary, target_lang), key=k)
     parsed = _parse_segment(raw_title, 1)
     ch["title_translated"] = (parsed[0] or raw_title).strip().strip("【1】").strip() or ch["title"]
+    ch["seg_done"] = 1
+    store.save_book(book)
 
-    if (ch.get("format") or book["format"]) == "epub":
-        soup, units, heading_el = parsing.extract_units(src)
-        texts = [t for _, t in units]
+    if is_epub:
         if texts and not stop.is_set():
-            translated = await _translate_units(client, cfg, semaphore, stop, texts, glossary)
+            translated = await _translate_units(client, cfg, pool, stop, texts, glossary,
+                                                on_progress=on_seg_done)
             for (el, _), t in zip(units, translated):
                 parsing.set_el_text(el, t)
         if heading_el is not None:
             parsing.set_el_text(heading_el, ch["title_translated"])
         store.chapter_dst_path(book_id, ch["id"]).write_text(str(soup), encoding="utf-8")
     else:
-        units = [p.strip() for p in re.split(r"\n+", src) if p.strip()]
-        if units and not stop.is_set():
-            translated = await _translate_units(client, cfg, semaphore, stop, units, glossary)
+        if texts and not stop.is_set():
+            translated = await _translate_units(client, cfg, pool, stop, texts, glossary,
+                                                on_progress=on_seg_done)
             body = "\n".join(translated)
         else:
             body = src
@@ -275,7 +348,6 @@ async def translate_book(book_id: str, chapter_ids: list[str] | None = None,
     cfg = store.load_config()
     stop = asyncio.Event()
     _stop_flags[book_id] = stop
-    semaphore = asyncio.Semaphore(cfg["concurrency"])
     book["status"] = "translating"
     book["error"] = None
     store.save_book(book)
@@ -285,13 +357,14 @@ async def translate_book(book_id: str, chapter_ids: list[str] | None = None,
                and (overwrite or c.get("status") != "done")]
 
     try:
+        pool = KeyPool(cfg)
         async with httpx.AsyncClient(timeout=180) as client:
             # 书名翻译
             if book.get("title") and (overwrite or not book.get("title_translated")):
                 try:
-                    async with semaphore:
+                    async with pool.slot() as k:
                         raw = await chat(client, cfg, _title_messages(
-                            [book["title"]], book.get("glossary") or [], cfg["target_lang"]))
+                            [book["title"]], book.get("glossary") or [], cfg["target_lang"]), key=k)
                     parsed = _parse_segment(raw, 1)
                     book["title_translated"] = (parsed[0] or raw).strip().strip("【1】").strip()
                     store.save_book(book)
@@ -303,9 +376,10 @@ async def translate_book(book_id: str, chapter_ids: list[str] | None = None,
                     return
                 ch["status"] = "translating"
                 ch["error"] = None
+                ch["seg_done"] = 0
                 store.save_book(book)
                 try:
-                    await _translate_chapter(client, cfg, semaphore, stop, book, ch)
+                    await _translate_chapter(client, cfg, pool, stop, book, ch)
                     if stop.is_set():
                         ch["status"] = "pending"
                     else:
@@ -357,9 +431,11 @@ async def _retranslate_book_title(book_id: str) -> None:
         if not book or not book.get("title"):
             return
         cfg = store.load_config()
+        pool = KeyPool(cfg)
         async with httpx.AsyncClient(timeout=180) as client:
-            raw = await chat(client, cfg, _title_messages(
-                [book["title"]], book.get("glossary") or [], cfg["target_lang"]))
+            async with pool.slot() as k:
+                raw = await chat(client, cfg, _title_messages(
+                    [book["title"]], book.get("glossary") or [], cfg["target_lang"]), key=k)
         parsed = _parse_segment(raw, 1)
         book = store.load_book(book_id) or book
         book["title_translated"] = (parsed[0] or raw).strip() or book["title"]
@@ -378,14 +454,14 @@ async def _retranslate_toc(book_id: str) -> None:
         glossary = book.get("glossary") or []
         chapters = book["chapters"]
         titles = [c["title"] for c in chapters]
-        semaphore = asyncio.Semaphore(cfg["concurrency"])
+        pool = KeyPool(cfg)
 
         async with httpx.AsyncClient(timeout=180) as client:
             async def do_segment(idxs: list[int]) -> None:
                 try:
-                    async with semaphore:
+                    async with pool.slot() as k:
                         raw = await chat(client, cfg, _title_messages(
-                            [titles[i] for i in idxs], glossary, cfg["target_lang"]))
+                            [titles[i] for i in idxs], glossary, cfg["target_lang"]), key=k)
                     parsed = _parse_segment(raw, len(idxs))
                     for n, v in enumerate(parsed):
                         if v:
@@ -425,3 +501,67 @@ def start_title_retranslate(book_id: str, scope: str) -> bool:
     coro = _retranslate_book_title(book_id) if scope == "book" else _retranslate_toc(book_id)
     _tasks[book_id] = asyncio.create_task(coro)
     return True
+
+
+# ---------------- 翻译队列 ----------------
+
+_queue_task: asyncio.Task | None = None
+_queue_stop: asyncio.Event | None = None
+_queue_current: str | None = None
+
+
+def queue_running() -> bool:
+    return bool(_queue_task and not _queue_task.done())
+
+
+def queue_current() -> str | None:
+    return _queue_current
+
+
+def start_queue() -> bool:
+    """启动队列执行器：按顺序逐本翻译队列中的书。"""
+    global _queue_task, _queue_stop
+    if queue_running() or not store.load_queue():
+        return False
+    _queue_stop = asyncio.Event()
+    _queue_task = asyncio.create_task(_run_queue(_queue_stop))
+    return True
+
+
+def stop_queue() -> None:
+    """停止队列：中断当前书的翻译，未开始的书保留在队列中。"""
+    if _queue_stop:
+        _queue_stop.set()
+    if _queue_current:
+        stop_translation(_queue_current)
+
+
+async def _run_queue(stop: asyncio.Event) -> None:
+    global _queue_task, _queue_stop, _queue_current
+    try:
+        while not stop.is_set():
+            entries = store.load_queue()
+            if not entries:
+                break
+            entry = entries[0]
+            book_id = entry["book_id"]
+            if not store.load_book(book_id):
+                store.dequeue_book(book_id)
+                continue
+            if is_running(book_id):
+                # 该书已有任务在跑（如手动单章重译），等它结束再接管
+                await asyncio.sleep(2)
+                continue
+            _queue_current = book_id
+            _tasks[book_id] = asyncio.current_task()
+            try:
+                await translate_book(book_id, entry.get("chapter_ids"),
+                                     bool(entry.get("overwrite")))
+            finally:
+                _queue_current = None
+            if stop.is_set():
+                break  # 被停止：当前书保留在队列，下次可继续
+            store.dequeue_book(book_id)
+    finally:
+        _queue_task = None
+        _queue_stop = None

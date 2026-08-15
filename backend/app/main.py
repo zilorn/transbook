@@ -26,16 +26,26 @@ FRONTEND_DIST = store.BASE_DIR.parent / "frontend" / "dist"
 
 # ---------- 配置 ----------
 
+def _mask(s: str) -> str:
+    return s[:6] + "..." if s else ""
+
+
 @app.get("/api/config")
 def get_config():
     cfg = store.load_config()
-    cfg["api_key_set"] = bool(cfg.get("api_key"))
-    cfg["api_key"] = cfg.get("api_key", "")[:6] + "..." if cfg.get("api_key") else ""
+    # 多 key 为空但存在旧的单 key 配置时，合成一条用于前端展示（保存时迁移为 api_keys）
+    keys = cfg.get("api_keys") or []
+    if not keys and cfg.get("api_key"):
+        keys = [{"key": cfg["api_key"], "model": "", "concurrency": 0}]
+    cfg["api_keys"] = [{**k, "key": _mask(k["key"])} for k in keys]
+    cfg["api_key_set"] = bool(keys)
+    cfg["api_key"] = _mask(cfg.get("api_key", ""))
     return cfg
 
 
 class ConfigIn(BaseModel):
     api_key: str | None = None
+    api_keys: list[dict] | None = None
     base_url: str | None = None
     model: str | None = None
     target_lang: str | None = None
@@ -51,6 +61,18 @@ def put_config(body: ConfigIn):
     # 前端回显的是脱敏 key，原样提交时不覆盖
     if updates.get("api_key", "").endswith("..."):
         updates.pop("api_key")
+    if "api_keys" in updates:
+        # 脱敏 key 按位置回代原值；提交了 api_keys 即迁移掉旧的单 key 字段
+        old = cfg.get("api_keys") or []
+        if not old and cfg.get("api_key"):
+            old = [{"key": cfg["api_key"], "model": "", "concurrency": 0}]
+        merged_keys = []
+        for i, k in enumerate(updates["api_keys"]):
+            if isinstance(k, dict) and str(k.get("key") or "").endswith("..."):
+                k = {**k, "key": old[i]["key"] if i < len(old) else ""}
+            merged_keys.append(k)
+        updates["api_keys"] = merged_keys
+        updates["api_key"] = ""
     cfg.update(updates)
     return store.save_config(cfg)
 
@@ -233,6 +255,7 @@ def get_book(book_id: str):
 @app.delete("/api/books/{book_id}")
 def delete_book(book_id: str):
     translator.stop_translation(book_id)
+    store.dequeue_book(book_id)
     store.delete_book(book_id)
     return {"ok": True}
 
@@ -333,6 +356,75 @@ async def retranslate_toc(book_id: str):
     if not translator.start_title_retranslate(book_id, "toc"):
         raise HTTPException(409, "该书已有任务在运行")
     return {"ok": True}
+
+
+# ---------- 翻译队列 ----------
+
+class QueueIn(BaseModel):
+    book_id: str
+    chapter_ids: list[str] | None = None
+    overwrite: bool = False
+
+
+@app.get("/api/queue")
+def get_queue():
+    return {"running": translator.queue_running(), "entries": store.load_queue()}
+
+
+@app.post("/api/queue")
+def add_to_queue(body: QueueIn):
+    if not store.load_book(body.book_id):
+        raise HTTPException(404, "书籍不存在")
+    q = store.enqueue_book(body.book_id, body.chapter_ids, body.overwrite)
+    return {"ok": True, "entries": q, "running": translator.queue_running()}
+
+
+@app.delete("/api/queue/{book_id}")
+def remove_from_queue(book_id: str):
+    if translator.queue_current() == book_id:
+        raise HTTPException(409, "该书正在翻译，请先停止队列")
+    return {"ok": True, "entries": store.dequeue_book(book_id)}
+
+
+@app.post("/api/queue/start")
+async def start_queue():
+    if not store.load_queue():
+        raise HTTPException(400, "队列为空")
+    if not translator.start_queue():
+        raise HTTPException(409, "队列已在运行")
+    return {"ok": True}
+
+
+@app.post("/api/queue/stop")
+async def stop_queue():
+    translator.stop_queue()
+    return {"ok": True}
+
+
+@app.get("/api/queue/status")
+def queue_status():
+    """队列 + 每本书的章节/分段进度，供翻译页轮询。"""
+    entries = []
+    for e in store.load_queue():
+        book = store.load_book(e["book_id"])
+        if not book:
+            continue
+        entries.append({
+            "book_id": e["book_id"],
+            "overwrite": bool(e.get("overwrite")),
+            "title": book.get("title") or "",
+            "title_translated": book.get("title_translated"),
+            "status": book.get("status"),
+            "error": book.get("error"),
+            "running": translator.is_running(book["id"]),
+            "chapters": [{
+                "id": c["id"], "title": c["title"],
+                "title_translated": c.get("title_translated"),
+                "status": c.get("status"), "error": c.get("error"),
+                "seg_total": c.get("seg_total"), "seg_done": c.get("seg_done"),
+            } for c in book.get("chapters", [])],
+        })
+    return {"running": translator.queue_running(), "entries": entries}
 
 
 # ---------- 导出 ----------

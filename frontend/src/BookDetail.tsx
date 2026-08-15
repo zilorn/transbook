@@ -1,4 +1,5 @@
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { useNavigate, useParams } from '@solidjs/router'
 import { api } from './api'
 import type { Book, Chapter, ChapterPreview, GlossaryTerm } from './types'
 
@@ -31,7 +32,10 @@ interface AppendPreview {
   filename: string
 }
 
-export default function BookDetail(props: { id: string; onBack: () => void }) {
+export default function BookDetail() {
+  const params = useParams<{ id: string }>()
+  const navigate = useNavigate()
+  const bookId = params.id
   const [book, setBook] = createSignal<Book | null>(null)
   const [error, setError] = createSignal('')
   const [msg, setMsg] = createSignal('')
@@ -62,7 +66,7 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
       format: c.format, loading: true, content: '', error: '',
     })
     try {
-      const content = await api.chapterContent(props.id, c.id, translated)
+      const content = await api.chapterContent(bookId, c.id, translated)
       setPreview(p => (p ? { ...p, loading: false, content } : p))
     } catch (e: any) {
       setPreview(p => (p ? { ...p, loading: false, error: String(e.message || e) } : p))
@@ -72,7 +76,7 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
   const refresh = async () => {
     try {
       const prev = book()?.status
-      const b = await api.book(props.id)
+      const b = await api.book(bookId)
       setBook(b)
       // 术语表生成完毕（状态从 glossary 变回 ready），更新提示
       if (prev === 'glossary' && b.status === 'ready') setMsg('术语表已生成')
@@ -115,7 +119,7 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
   const addTerm = () => { setGlossary([...glossary(), { src: '', dst: '', type: '术语' }]); setGlossaryDirty(true) }
   const delTerm = (i: number) => { setGlossary(glossary().filter((_, n) => n !== i)); setGlossaryDirty(true) }
   const saveGlossary = () => act(
-    () => api.saveGlossary(props.id, glossary()),
+    () => api.saveGlossary(bookId, glossary()),
     '术语表已保存'
   ).then(() => setGlossaryDirty(false))
   const copyGlossary = async () => {
@@ -134,7 +138,7 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
     setError('')
     setMsg('')
     try {
-      const res = await api.previewChapters(props.id, file)
+      const res = await api.previewChapters(bookId, file)
       setAppendPrev({
         chapters: res.chapters.map(c => ({ ...c, checked: !c.duplicate })),
         existing: res.existing,
@@ -161,14 +165,14 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
     const selected = p.chapters.filter(c => c.checked)
       .map(c => ({ title: c.title, body: c.body, format: c.format }))
     if (!selected.length) return
-    act(() => api.addChapters(props.id, selected), `已追加 ${selected.length} 章`)
+    act(() => api.addChapters(bookId, selected), `已追加 ${selected.length} 章`)
       .then(() => setAppendPrev(null))
   }
   const onAddText = () => {
     const title = addTitle().trim()
     const body = addBody().trim()
     if (!title || !body) return
-    act(() => api.addChapters(props.id, [{ title, body: addBody(), format: 'txt' }]), '章节已添加')
+    act(() => api.addChapters(bookId, [{ title, body: addBody(), format: 'txt' }]), '章节已添加')
       .then(() => { setAddTitle(''); setAddBody('') })
   }
 
@@ -178,7 +182,7 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
     <Show when={book()} fallback={<p>加载中…</p>}>
       {(b) => (
         <div>
-          <button class="link" onClick={props.onBack}>← 返回列表</button>
+          <button class="link" onClick={() => navigate('/')}>← 返回列表</button>
           <div>
             <div class="flex items-center gap-2 mt-3 mb-1">
               <h2 class="text-[1.5em] font-bold m-0">{b().title_translated || b().title}</h2>
@@ -208,14 +212,14 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
 
           <div class="flex gap-2.5 my-4 items-center flex-wrap">
             <button class="primary" disabled={busy() || b().running}
-              onClick={() => act(() => api.translate(b().id))}>
-              {doneCount() > 0 ? '继续翻译未完成章节' : '开始翻译'}
+              onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
+              {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
             </button>
             <button disabled={busy() || b().running}
-              onClick={() => act(() => api.translate(b().id, { overwrite: true }))}>
-              全部重译
+              onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
+              排队全部重译
             </button>
-            <button disabled={!b().running} onClick={() => act(() => api.stop(b().id))}>停止</button>
+            <button class="link" onClick={() => navigate('/queue')}>前往翻译队列 →</button>
             <button disabled={busy() || b().running}
               onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
               生成术语表

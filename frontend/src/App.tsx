@@ -1,52 +1,58 @@
-import { createSignal, onMount, Show } from 'solid-js'
-import { api } from './api'
-import type { Config } from './types'
+import { A, HashRouter, Route } from '@solidjs/router'
+import { onMount, Show, type ParentProps } from 'solid-js'
+import { config, loadConfig, setSettingsOpen, settingsOpen } from './state'
 import BookList from './BookList'
 import BookDetail from './BookDetail'
+import TranslatePage from './TranslatePage'
 import Settings from './Settings'
 
-type Route = { view: 'list' | 'detail'; id?: string }
+const NAV = 'block px-3 py-2 rounded-[6px] text-[14px] no-underline'
+const NAV_ACTIVE = 'bg-[#dbeafe] text-[#1d4ed8] font-medium'
+const NAV_IDLE = 'text-text hover:bg-[#eef0f3]'
 
-export default function App() {
-  const [route, setRoute] = createSignal<Route>({ view: 'list' })
-  const [showSettings, setShowSettings] = createSignal(false)
-  const [config, setConfig] = createSignal<Config | null>(null)
-
-  onMount(async () => {
-    try { setConfig(await api.config()) } catch (e) { console.error(e) }
-  })
-
-  const openBook = (id: string) => setRoute({ view: 'detail', id })
+function Layout(props: ParentProps) {
+  onMount(loadConfig)
 
   return (
-    <div class="max-w-[960px] mx-auto px-4 pb-[60px]">
-      <header>
-        <h1 onClick={() => setRoute({ view: 'list' })} style={{ cursor: 'pointer' }}>
-          📖 书本翻译
-        </h1>
-        <div class="flex items-center gap-2.5">
+    <div class="flex min-h-screen">
+      <aside class="w-[200px] shrink-0 bg-card border-r border-line flex flex-col sticky top-0 h-screen">
+        <div class="px-4 py-4 border-b border-line">
+          <A href="/" class="text-[18px] font-bold no-underline text-text hover:text-primary">
+            📖 书本翻译
+          </A>
+        </div>
+        <nav class="flex-1 p-3 flex flex-col gap-1">
+          <A href="/" end class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}>书库</A>
+          <A href="/queue" class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}>翻译队列</A>
+        </nav>
+        <div class="p-3 border-t border-line flex flex-col gap-2 items-start">
           <Show when={config()}>
             <span class={`text-[12px] px-2 py-[3px] rounded-[10px] ${config()!.api_key_set ? 'bg-[#dcfce7] text-[#166534]' : 'bg-[#fee2e2] text-[#991b1b]'}`}>
-              {config()!.api_key_set ? 'API 已配置' : '未配置 API Key'}
+              {config()!.api_key_set ? `API 已配置（${config()!.api_keys.length} 个 Key）` : '未配置 API Key'}
             </span>
           </Show>
-          <button onClick={() => setShowSettings(true)}>设置</button>
+          <button class="w-full" onClick={() => setSettingsOpen(true)}>设置</button>
         </div>
-      </header>
-      <main>
-        <Show when={route().view === 'list'}>
-          <BookList onOpen={openBook} />
-        </Show>
-        <Show when={route().view === 'detail'}>
-          <BookDetail id={route().id!} onBack={() => setRoute({ view: 'list' })} />
-        </Show>
+      </aside>
+      <main class="flex-1 min-w-0 px-6 pb-[60px]">
+        {props.children}
       </main>
-      <Show when={showSettings()}>
+      <Show when={settingsOpen() && config()}>
         <Settings config={config()!} onClose={(saved) => {
-          setShowSettings(false)
-          if (saved) api.config().then(setConfig)
+          setSettingsOpen(false)
+          if (saved) loadConfig()
         }} />
       </Show>
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <HashRouter root={Layout}>
+      <Route path="/" component={BookList} />
+      <Route path="/books/:id" component={BookDetail} />
+      <Route path="/queue" component={TranslatePage} />
+    </HashRouter>
   )
 }

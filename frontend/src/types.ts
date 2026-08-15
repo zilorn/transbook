@@ -1,7 +1,15 @@
 // API 返回类型（与 backend/app/main.py、store.py 的响应结构对应）
 
+// 单个 API Key 配置：model 为空字符串 = 跟随统一模型；concurrency 为 0 = 跟随统一并发数
+export interface ApiKeyEntry {
+  key: string
+  model: string
+  concurrency: number
+}
+
 export interface Config {
   api_key: string
+  api_keys: ApiKeyEntry[]
   api_key_set: boolean
   base_url: string
   model: string
@@ -36,6 +44,9 @@ export interface Chapter {
   status: ChapterStatus
   error: string | null
   format: string
+  // 分段翻译进度（翻译中的章节由后端实时更新）
+  seg_total?: number | null
+  seg_done?: number | null
 }
 
 export interface GlossaryTerm {
@@ -82,4 +93,21 @@ export interface ChapterPreviewResult {
 export interface TranslateOptions {
   chapter_ids?: string[]
   overwrite?: boolean
+}
+
+// GET /api/queue/status 返回的队列条目（含章节与分段进度）
+export interface QueueStatusEntry {
+  book_id: string
+  overwrite: boolean
+  title: string
+  title_translated: string | null
+  status: BookStatus
+  error: string | null
+  running: boolean
+  chapters: Omit<Chapter, 'format'>[]
+}
+
+export interface QueueStatus {
+  running: boolean
+  entries: QueueStatusEntry[]
 }

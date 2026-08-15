@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { useNavigate } from '@solidjs/router'
 import { api } from './api'
 import type { BookSummary } from './types'
 
@@ -16,7 +17,9 @@ const STATUS_BADGE: Record<string, string> = {
   error: 'bg-[#fee2e2] text-[#991b1b]',
 }
 
-export default function BookList(props: { onOpen: (id: string) => void }) {
+export default function BookList() {
+  const navigate = useNavigate()
+  const openBook = (id: string) => navigate(`/books/${id}`)
   const [books, setBooks] = createSignal<BookSummary[]>([])
   const [query, setQuery] = createSignal('')
   const [uploading, setUploading] = createSignal(false)
@@ -74,7 +77,7 @@ export default function BookList(props: { onOpen: (id: string) => void }) {
     setError('')
     try {
       const book = await api.upload(file)
-      props.onOpen(book.id)
+      openBook(book.id)
     } catch (err: any) {
       setError(String(err.message || err))
     } finally {
@@ -118,7 +121,7 @@ export default function BookList(props: { onOpen: (id: string) => void }) {
         <For each={filtered()}>
           {(b) => (
             <div class="bg-card border border-line rounded-[10px] p-3.5 cursor-pointer hover:border-primary"
-              onClick={() => props.onOpen(b.id)}>
+              onClick={() => openBook(b.id)}>
               <div class="font-semibold mb-1 break-all">{b.title_translated || b.title}</div>
               <Show when={b.title_translated && b.title_translated !== b.title}>
                 <div class="text-muted text-[13px]">{b.title}</div>

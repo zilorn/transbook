@@ -12,14 +12,16 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 BOOKS_DIR = DATA_DIR / "books"
 CONFIG_PATH = DATA_DIR / "config.json"
+QUEUE_PATH = DATA_DIR / "queue.json"
 
 DEFAULT_CONFIG = {
     "api_key": "",
+    "api_keys": [],
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-chat",
     "target_lang": "简体中文",
     "concurrency": 5,
-    "max_segment_chars": 3000,
+    "max_segment_chars": 8000,
     "webdav_enabled": False,
 }
 
@@ -43,20 +45,71 @@ def _write_json(path: Path, obj) -> None:
 
 # ---------- 全局配置 ----------
 
+def _norm_keys(keys) -> list[dict]:
+    """规范化多 API Key 配置：key 必填；model 为空表示跟随统一模型；
+    concurrency 为 0 表示跟随统一并发数。"""
+    out = []
+    for k in keys or []:
+        if not isinstance(k, dict):
+            continue
+        key = str(k.get("key") or "").strip()
+        if not key:
+            continue
+        try:
+            conc = max(0, int(k.get("concurrency") or 0))
+        except (TypeError, ValueError):
+            conc = 0
+        out.append({"key": key, "model": str(k.get("model") or "").strip(),
+                    "concurrency": conc})
+    return out
+
+
 def load_config() -> dict:
     cfg = dict(DEFAULT_CONFIG)
     cfg.update(_read_json(CONFIG_PATH, {}))
     cfg["concurrency"] = max(1, int(cfg.get("concurrency") or 5))
-    cfg["max_segment_chars"] = max(500, int(cfg.get("max_segment_chars") or 3000))
+    cfg["max_segment_chars"] = max(500, int(cfg.get("max_segment_chars") or 8000))
+    cfg["api_keys"] = _norm_keys(cfg.get("api_keys"))
     return cfg
 
 
 def save_config(cfg: dict) -> dict:
     merged = dict(DEFAULT_CONFIG)
     merged.update({k: v for k, v in cfg.items() if k in DEFAULT_CONFIG})
+    merged["api_keys"] = _norm_keys(merged.get("api_keys"))
     with _lock:
         _write_json(CONFIG_PATH, merged)
     return load_config()
+
+
+# ---------- 翻译队列 ----------
+
+def load_queue() -> list[dict]:
+    q = _read_json(QUEUE_PATH, [])
+    if not isinstance(q, list):
+        return []
+    return [e for e in q if isinstance(e, dict) and e.get("book_id")]
+
+
+def save_queue(entries: list[dict]) -> None:
+    with _lock:
+        _write_json(QUEUE_PATH, entries)
+
+
+def enqueue_book(book_id: str, chapter_ids: list[str] | None = None,
+                 overwrite: bool = False) -> list[dict]:
+    """加入翻译队列；同一本书重复加入时替换旧条目（后加的生效）。"""
+    q = [e for e in load_queue() if e["book_id"] != book_id]
+    q.append({"book_id": book_id, "chapter_ids": chapter_ids,
+              "overwrite": bool(overwrite), "added_at": now()})
+    save_queue(q)
+    return q
+
+
+def dequeue_book(book_id: str) -> list[dict]:
+    q = [e for e in load_queue() if e["book_id"] != book_id]
+    save_queue(q)
+    return q
 
 
 # ---------- 书籍 ----------
