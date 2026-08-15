@@ -17,7 +17,7 @@ async def chat(client: httpx.AsyncClient, cfg: dict, messages: list[dict],
         raise DeepSeekError("未配置 DeepSeek API Key，请先在设置中填写")
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     payload = {
-        "model": cfg.get("model") or "deepseek-chat",
+        "model": cfg.get("model") or "deepseek-v4-flash",
         "messages": messages,
         "temperature": 0.3,
         "stream": False,
