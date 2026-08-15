@@ -20,6 +20,7 @@ DEFAULT_CONFIG = {
     "target_lang": "简体中文",
     "concurrency": 5,
     "max_segment_chars": 3000,
+    "webdav_enabled": False,
 }
 
 _lock = threading.Lock()

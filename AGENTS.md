@@ -22,6 +22,7 @@ backend/
     parsing.py     # txt 正则分章、epub 解析/生成、HTML 翻译单元抽取
     deepseek.py    # DeepSeek API 客户端
     translator.py  # 术语表生成 + 按章并发翻译流水线（asyncio）
+    webdav.py      # 只读 WebDAV（/webdav/）：有译文的书打包 EPUB 暴露给阅读软件
   data/            # 运行时数据（书籍、译文、配置），已 gitignore
 frontend/
   src/index.tsx  App.tsx  BookList.tsx  BookDetail.tsx  Settings.tsx  api.ts  types.ts
@@ -39,6 +40,7 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 ```
 
 注意：本机 8000 端口被其他服务占用，后端固定用 **8300**，前端 vite 代理 `/api` → 8300。
+后端监听 `0.0.0.0`，WebDAV 书库（及 API）可从局域网访问；WebDAV 无认证，勿暴露到公网。
 
 ## 关键约定
 
@@ -61,6 +63,11 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   用 BeautifulSoup 抽取 body 内容重建干净文档（带 xml 声明的完整文档会让 ebooklib 崩溃）。
 - **FastAPI 路由**：调用 `asyncio.create_task` 的接口必须是 `async def`
   （同步 def 会跑在线程池，没有 running event loop）。
+- **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，
+  写操作 405），与 API 同端口 8300，`config.webdav_enabled` 开关（默认关），未开启时 404。
+  只列出有译文的书籍（`list_books` 中 done>0），文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
+  EPUB 按需生成并缓存为 `books/<id>/webdav.epub`，源文件（book.json/章节）更新后自动重建。
+  无认证，仅供局域网使用。
 
 ## API 一览
 
@@ -75,3 +82,4 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - `POST /api/books/{id}/translate`（body: `{chapter_ids?, overwrite?}`）/ `POST .../stop`
 - `POST /api/books/{id}/chapters/{cid}/retranslate` — 单章重译
 - `GET /api/books/{id}/export?fmt=txt|epub` — 导出
+- `WebDAV /webdav/` — 只读书库（PROPFIND 列出 EPUB、GET 下载），需在设置中开启

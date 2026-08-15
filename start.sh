@@ -34,15 +34,21 @@ if port_in_use "$FRONTEND_PORT"; then
   exit 1
 fi
 
-setsid bash -c "cd backend && exec uv run uvicorn app.main:app --host 127.0.0.1 --port $BACKEND_PORT" &
+setsid bash -c "cd backend && exec uv run uvicorn app.main:app --host 0.0.0.0 --port $BACKEND_PORT" &
 BACKEND_PID=$!
 
 setsid bash -c "cd frontend && exec bun run dev -- --port $FRONTEND_PORT" &
 FRONTEND_PID=$!
 
+LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+if [ -z "$LAN_IP" ]; then
+  LAN_IP=$(ip -4 addr show scope global 2>/dev/null | awk '/inet /{sub(/\/.*/, "", $2); print $2; exit}')
+fi
+
 echo "==================================="
 echo "  后端 API:  http://localhost:$BACKEND_PORT"
 echo "  前端页面:  http://localhost:$FRONTEND_PORT"
+[ -n "$LAN_IP" ] && echo "  局域网访问: http://$LAN_IP:$BACKEND_PORT（WebDAV 书库: http://$LAN_IP:$BACKEND_PORT/webdav/）"
 echo "  按 Ctrl+C 一键停止所有服务"
 echo "==================================="
 

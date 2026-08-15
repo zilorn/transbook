@@ -8,6 +8,7 @@ export interface Config {
   target_lang: string
   concurrency: number
   max_segment_chars: number
+  webdav_enabled: boolean
 }
 
 export type BookStatus = 'ready' | 'glossary' | 'translating' | 'paused' | 'done' | 'error'

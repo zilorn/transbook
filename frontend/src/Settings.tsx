@@ -66,6 +66,19 @@ export default function Settings(props: { config: Config; onClose: (saved: boole
           <input class={INPUT} type="number" min="500" max="20000" value={form().max_segment_chars}
             onInput={(e) => set('max_segment_chars', e.currentTarget.value)} />
         </label>
+        <label class="flex items-center gap-2 mb-3 text-[13px] text-muted cursor-pointer">
+          <input type="checkbox" checked={form().webdav_enabled || false}
+            onChange={(e) => set('webdav_enabled', e.currentTarget.checked)} />
+          开启 WebDAV 书库（只读，供阅读软件访问）
+        </label>
+        {form().webdav_enabled && (
+          <p class="mb-3 text-[12px] text-muted break-all">
+            在阅读软件中添加 WebDAV 书库，地址：
+            <code class="select-all">http://{location.hostname}:8300/webdav/</code>
+            <br />已翻译的书籍会以 EPUB 形式出现在书库根目录。
+            从手机等其他设备访问时，把主机名换成本机的局域网 IP。
+          </p>
+        )}
         {error() && <p class="text-danger text-[13px]">{error()}</p>}
         <div class="flex justify-end gap-2.5 mt-2">
           <button onClick={() => props.onClose(false)}>取消</button>

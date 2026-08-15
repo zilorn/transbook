@@ -9,9 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import parsing, store, translator
+from . import parsing, store, translator, webdav
 
 app = FastAPI(title="TranLatexBook")
+app.include_router(webdav.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -40,6 +41,7 @@ class ConfigIn(BaseModel):
     target_lang: str | None = None
     concurrency: int | None = None
     max_segment_chars: int | None = None
+    webdav_enabled: bool | None = None
 
 
 @app.put("/api/config")
@@ -314,34 +316,12 @@ async def retranslate_chapter(book_id: str, chapter_id: str):
 
 # ---------- 导出 ----------
 
-def _collect_chapters(book: dict) -> list[dict]:
-    """返回 [{title, text, html}]，优先使用译文。"""
-    out = []
-    for ch in book["chapters"]:
-        dst = store.chapter_dst_path(book["id"], ch["id"])
-        src = store.chapter_src_path(book["id"], ch["id"])
-        p = dst if dst.exists() else src
-        raw = p.read_text(encoding="utf-8", errors="replace")
-        title = ch.get("title_translated") or ch["title"]
-        if (ch.get("format") or book["format"]) == "epub":
-            soup = parsing.BeautifulSoup(raw, "html.parser")
-            lines = [ln.strip() for ln in soup.get_text("\n").splitlines() if ln.strip()]
-            # 去掉与章节标题重复的首行标题（HTML 正文里已含 <h1>）
-            if lines and lines[0] == title:
-                lines = lines[1:]
-            out.append({"title": title, "html": raw, "text": "\n".join(lines)})
-        else:
-            out.append({"title": title, "text": raw,
-                        "html": parsing.text_to_html(raw)})
-    return out
-
-
 @app.get("/api/books/{book_id}/export")
 def export_book(book_id: str, fmt: str = "txt"):
     book = store.load_book(book_id)
     if not book:
         raise HTTPException(404, "书籍不存在")
-    chapters = _collect_chapters(book)
+    chapters = webdav.collect_chapters(book)
     title = book.get("title_translated") or book["title"]
     safe = re.sub(r'[\\/:*?"<>|]', "_", title) or "book"
 
