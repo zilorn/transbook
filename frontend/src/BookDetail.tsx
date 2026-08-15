@@ -43,6 +43,17 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
   const [busy, setBusy] = createSignal(false)
   const [preview, setPreview] = createSignal<PreviewState | null>(null)
   const [appendPrev, setAppendPrev] = createSignal<AppendPreview | null>(null)
+  const [chapterQuery, setChapterQuery] = createSignal('')
+
+  // 章节搜索：按原标题/译后标题过滤（不区分大小写），保留原序号
+  const filteredChapters = () =>
+    (book()?.chapters || [])
+      .map((c, i) => ({ c, n: i + 1 }))
+      .filter(({ c }) => {
+        const q = chapterQuery().trim().toLowerCase()
+        if (!q) return true
+        return c.title.toLowerCase().includes(q) || (c.title_translated || '').toLowerCase().includes(q)
+      })
 
   // ---- 章节内容预览（原文/译文）----
   const openPreview = async (c: Chapter, translated: boolean) => {
@@ -217,15 +228,26 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
           </div>
 
           <Show when={tab() === 'chapters'}>
+            <div class="flex gap-2.5 mb-2.5 items-center">
+              <input class="w-[280px] px-2.5 py-[7px] border border-line rounded-[6px] text-[14px]"
+                placeholder="搜索章节（原标题 / 译后标题）"
+                value={chapterQuery()} onInput={(e) => setChapterQuery(e.currentTarget.value)} />
+              <Show when={chapterQuery().trim()}>
+                <span class="text-muted text-[13px]">
+                  匹配 {filteredChapters().length} / {b().chapters.length} 章
+                </span>
+                <button class="small" onClick={() => setChapterQuery('')}>清除</button>
+              </Show>
+            </div>
             <table>
               <thead>
                 <tr><th>#</th><th>原标题</th><th>译后标题</th><th>状态</th><th></th></tr>
               </thead>
               <tbody>
-                <For each={b().chapters}>
-                  {(c, i) => (
+                <For each={filteredChapters()}>
+                  {({ c, n }) => (
                     <tr>
-                      <td>{i() + 1}</td>
+                      <td>{n}</td>
                       <td>
                         <button class="link p-0 text-left text-[14px]" title="预览原文"
                           onClick={() => openPreview(c, false)}>{c.title}</button>
@@ -253,6 +275,9 @@ export default function BookDetail(props: { id: string; onBack: () => void }) {
                 </For>
               </tbody>
             </table>
+            <Show when={filteredChapters().length === 0}>
+              <p class="text-muted text-center py-[30px]">没有匹配的章节。</p>
+            </Show>
           </Show>
 
           <Show when={tab() === 'glossary'}>
