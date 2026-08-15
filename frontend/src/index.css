@@ -87,6 +87,28 @@ th { color: var(--muted); font-weight: 500; font-size: 13px; }
   font-size: 14px; margin: 8px 0; font-family: inherit; resize: vertical;
 }
 .add-chapters h3 { font-size: 15px; margin: 18px 0 8px; }
+.add-chapters .add-title {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+  font-size: 14px; margin: 8px 0 0;
+}
+
+.modal.append { width: 640px; max-height: 84vh; display: flex; flex-direction: column; }
+.append-info { color: var(--muted); font-size: 13px; margin: 0 0 4px; }
+.append-list { overflow-y: auto; flex: 1; border: 1px solid var(--line); border-radius: 6px; }
+.modal.append label.append-item {
+  display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px;
+  margin-bottom: 0; border-bottom: 1px solid var(--line); cursor: pointer;
+  font-size: 14px; color: var(--text);
+}
+.modal.append label.append-item:last-child { border-bottom: none; }
+.modal.append input[type="checkbox"] { width: auto; margin-top: 3px; }
+.append-item-main { flex: 1; min-width: 0; }
+.append-item-title { font-weight: 500; margin-right: 6px; word-break: break-all; }
+.append-item .badge { margin-right: 4px; }
+.append-item .snippet {
+  color: var(--muted); font-size: 12px; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 .modal-mask {
   position: fixed; inset: 0; background: rgba(0, 0, 0, 0.4);

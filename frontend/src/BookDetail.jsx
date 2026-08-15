@@ -10,9 +10,11 @@ export default function BookDetail(props) {
   const [glossary, setGlossary] = createSignal([])
   const [glossaryDirty, setGlossaryDirty] = createSignal(false)
   const [tab, setTab] = createSignal('chapters')
-  const [addText, setAddText] = createSignal('')
+  const [addTitle, setAddTitle] = createSignal('')
+  const [addBody, setAddBody] = createSignal('')
   const [busy, setBusy] = createSignal(false)
   const [preview, setPreview] = createSignal(null)
+  const [appendPrev, setAppendPrev] = createSignal(null)
 
   // ---- 章节内容预览（原文/译文）----
   const openPreview = async (c, translated) => {
@@ -76,15 +78,50 @@ export default function BookDetail(props) {
   ).then(() => setGlossaryDirty(false))
 
   // ---- 追加章节 ----
-  const onAddFile = (e) => {
+  const onAddFile = async (e) => {
     const file = e.currentTarget.files?.[0]
+    e.currentTarget.value = ''
     if (!file) return
-    act(() => api.addChapters(props.id, { file })).finally(() => { e.currentTarget.value = '' })
+    setBusy(true)
+    setError('')
+    setMsg('')
+    try {
+      const res = await api.previewChapters(props.id, file)
+      setAppendPrev({
+        chapters: res.chapters.map(c => ({ ...c, checked: !c.duplicate })),
+        existing: res.existing,
+        filename: file.name,
+      })
+    } catch (err) {
+      setError(String(err.message || err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const toggleAppend = (i, checked) => {
+    setAppendPrev(p => p && ({
+      ...p,
+      chapters: p.chapters.map((c, n) => (n === i ? { ...c, checked } : c)),
+    }))
+  }
+  const setAllAppend = (checked) => {
+    setAppendPrev(p => p && ({ ...p, chapters: p.chapters.map(c => ({ ...c, checked })) }))
+  }
+  const confirmAppend = () => {
+    const p = appendPrev()
+    if (!p) return
+    const selected = p.chapters.filter(c => c.checked)
+      .map(c => ({ title: c.title, body: c.body, format: c.format }))
+    if (!selected.length) return
+    act(() => api.addChapters(props.id, selected), `已追加 ${selected.length} 章`)
+      .then(() => setAppendPrev(null))
   }
   const onAddText = () => {
-    if (!addText().trim()) return
-    act(() => api.addChapters(props.id, { text: addText() }), '章节已添加')
-      .then(() => setAddText(''))
+    const title = addTitle().trim()
+    const body = addBody().trim()
+    if (!title || !body) return
+    act(() => api.addChapters(props.id, [{ title, body: addBody(), format: 'txt' }]), '章节已添加')
+      .then(() => { setAddTitle(''); setAddBody('') })
   }
 
   const doneCount = () => (book()?.chapters || []).filter(c => c.status === 'done').length
@@ -216,17 +253,69 @@ export default function BookDetail(props) {
           <Show when={tab() === 'add'}>
             <div class="add-chapters">
               <h3>上传文件追加</h3>
-              <label class="upload-btn">
-                选择 .txt / .epub 文件（自动分章后追加到本书末尾）
-                <input type="file" accept=".epub,.txt" hidden onChange={onAddFile} />
+              <label class={`upload-btn ${busy() ? 'disabled' : ''}`}>
+                选择 .txt / .epub 文件（解析后勾选要追加的章节）
+                <input type="file" accept=".epub,.txt" hidden disabled={busy()} onChange={onAddFile} />
               </label>
               <h3>粘贴文本追加</h3>
-              <textarea rows="10" placeholder={'粘贴文本，按章节规则自动分章，例如：\n\n第三章 决战\n\n正文……'}
-                value={addText()} onInput={(e) => setAddText(e.currentTarget.value)} />
-              <button class="primary" disabled={busy() || !addText().trim()} onClick={onAddText}>
+              <input class="add-title" placeholder="章节名称（必填）"
+                value={addTitle()} onInput={(e) => setAddTitle(e.currentTarget.value)} />
+              <textarea rows="10" placeholder="章节正文（必填）"
+                value={addBody()} onInput={(e) => setAddBody(e.currentTarget.value)} />
+              <button class="primary" disabled={busy() || !addTitle().trim() || !addBody().trim()}
+                onClick={onAddText}>
                 添加为章节
               </button>
             </div>
+          </Show>
+
+          <Show when={appendPrev()}>
+            {(ap) => (
+              <div class="modal-mask" onClick={() => setAppendPrev(null)}>
+                <div class="modal append" onClick={(e) => e.stopPropagation()}>
+                  <h2>确认追加章节</h2>
+                  <p class="append-info">
+                    {ap().filename} 解析出 {ap().chapters.length} 章，本书已有 {ap().existing} 章。
+                    与已有章节重复的不默认勾选。
+                  </p>
+                  <div class="toolbar">
+                    <button class="small" onClick={() => setAllAppend(true)}>全选</button>
+                    <button class="small" onClick={() => setAllAppend(false)}>全不选</button>
+                  </div>
+                  <div class="append-list">
+                    <For each={ap().chapters}>
+                      {(c, i) => (
+                        <label class="append-item">
+                          <input type="checkbox" checked={c.checked}
+                            onChange={(e) => toggleAppend(i(), e.currentTarget.checked)} />
+                          <div class="append-item-main">
+                            <div>
+                              <span class="append-item-title">{c.title}</span>
+                              <span class="badge">{c.format}</span>
+                              <span class="badge">{c.chars} 字</span>
+                              <Show when={c.duplicate}>
+                                <span class="badge st-error">与已有章节重复</span>
+                              </Show>
+                            </div>
+                            <Show when={c.snippet}>
+                              <div class="snippet">{c.snippet}</div>
+                            </Show>
+                          </div>
+                        </label>
+                      )}
+                    </For>
+                  </div>
+                  <div class="modal-actions">
+                    <button onClick={() => setAppendPrev(null)}>取消</button>
+                    <button class="primary"
+                      disabled={busy() || !ap().chapters.some(c => c.checked)}
+                      onClick={confirmAppend}>
+                      追加选中的 {ap().chapters.filter(c => c.checked).length} 章
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </Show>
 
           <Show when={preview()}>

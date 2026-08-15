@@ -64,7 +64,10 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - `GET/PUT /api/config` — 设置（api_key、base_url、model、target_lang、concurrency、max_segment_chars）
 - `POST /api/books` — 上传 epub/txt（multipart）
 - `GET /api/books` / `GET /api/books/{id}` / `DELETE /api/books/{id}`
-- `POST /api/books/{id}/chapters` — 追加章节（file 或 text，自动分章）
+- `POST /api/books/{id}/chapters/preview` — 解析待追加的 txt/epub（multipart），
+  返回章节清单（含与已有章节的查重标记 duplicate），不写盘，供前端勾选
+- `POST /api/books/{id}/chapters` — 追加章节（JSON: `{chapters: [{title, body, format}]}`，
+  粘贴文本走单章；文件追加由 preview 勾选后回传）
 - `POST /api/books/{id}/glossary/generate` / `PUT /api/books/{id}/glossary` — 生成 / 保存术语表
 - `POST /api/books/{id}/translate`（body: `{chapter_ids?, overwrite?}`）/ `POST .../stop`
 - `POST /api/books/{id}/chapters/{cid}/retranslate` — 单章重译

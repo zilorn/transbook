@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
@@ -124,27 +124,87 @@ async def upload_book(file: UploadFile = File(...)):
     return book
 
 
-@app.post("/api/books/{book_id}/chapters")
-async def add_chapters(book_id: str, file: UploadFile | None = File(None),
-                       text: str = Form("")):
-    """追加新章节：上传 txt/epub 文件，或直接粘贴文本（按同样规则分章）。"""
+def _norm_title(t: str) -> str:
+    return re.sub(r"\s+", "", t).lower()
+
+
+def _norm_body(t: str) -> str:
+    return re.sub(r"\s+", "", t)[:300]
+
+
+def _existing_fingerprints(book: dict) -> tuple[set, set]:
+    """已有章节的标题/正文指纹，用于查重。"""
+    titles, bodies = set(), set()
+    for ch in book["chapters"]:
+        titles.add(_norm_title(ch["title"]))
+        p = store.chapter_src_path(book["id"], ch["id"])
+        if p.exists():
+            bodies.add(_norm_body(p.read_text(encoding="utf-8", errors="replace")))
+    return titles, bodies
+
+
+@app.post("/api/books/{book_id}/chapters/preview")
+async def preview_chapters(book_id: str, file: UploadFile = File(...)):
+    """解析待追加的 txt/epub 文件，返回章节清单（含查重标记），不写入。"""
     book = store.load_book(book_id)
     if not book:
         raise HTTPException(404, "书籍不存在")
     if translator.is_running(book_id):
         raise HTTPException(409, "翻译进行中，请先停止再添加章节")
 
-    if file is not None and file.filename:
-        raw = await file.read()
-        if not raw:
-            raise HTTPException(400, "文件为空")
-        pairs, _ = _parse_upload(raw, file.filename)
-    elif text.strip():
-        pairs = [(t, b, "txt") for t, b in parsing.split_txt_chapters(text)]
-    else:
-        raise HTTPException(400, "请提供文件或文本")
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "文件为空")
+    try:
+        pairs, _ = _parse_upload(raw, file.filename or "")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"文件解析失败: {e}")
     if not pairs:
-        raise HTTPException(400, "未能解析出新章节")
+        raise HTTPException(400, "未能从文件中解析出新章节")
+
+    titles, bodies = _existing_fingerprints(book)
+    out = []
+    for i, (title, body, fmt) in enumerate(pairs):
+        snippet = re.sub(r"<[^>]+>", " ", body) if fmt == "epub" else body
+        snippet = re.sub(r"\s+", " ", snippet).strip()[:100]
+        out.append({
+            "index": i, "title": title, "format": fmt, "body": body,
+            "chars": len(body), "snippet": snippet,
+            "duplicate": _norm_title(title) in titles or _norm_body(body) in bodies,
+        })
+    return {"chapters": out, "existing": len(book["chapters"])}
+
+
+class ChapterIn(BaseModel):
+    title: str
+    body: str
+    format: str = "txt"
+
+
+class ChaptersIn(BaseModel):
+    chapters: list[ChapterIn]
+
+
+@app.post("/api/books/{book_id}/chapters")
+async def add_chapters(book_id: str, body: ChaptersIn):
+    """追加章节：前端显式给出每章标题与正文（粘贴文本或预览勾选后的结果）。"""
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    if translator.is_running(book_id):
+        raise HTTPException(409, "翻译进行中，请先停止再添加章节")
+
+    pairs = []
+    for c in body.chapters:
+        title, text = c.title.strip(), c.body.strip()
+        if not title or not text:
+            continue
+        fmt = c.format if c.format in ("txt", "epub") else "txt"
+        pairs.append((title, c.body, fmt))
+    if not pairs:
+        raise HTTPException(400, "没有可添加的章节（标题与正文均不能为空）")
 
     start_n = len(book["chapters"]) + 1
     book["chapters"].extend(_persist_chapters(book_id, pairs, start_n))

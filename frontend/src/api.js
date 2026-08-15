@@ -32,12 +32,16 @@ export const api = {
     fd.append('file', file)
     return req('/api/books', { method: 'POST', body: fd })
   },
-  addChapters: (id, { file, text }) => {
+  previewChapters: (id, file) => {
     const fd = new FormData()
-    if (file) fd.append('file', file)
-    if (text) fd.append('text', text)
-    return req(`/api/books/${id}/chapters`, { method: 'POST', body: fd })
+    fd.append('file', file)
+    return req(`/api/books/${id}/chapters/preview`, { method: 'POST', body: fd })
   },
+  addChapters: (id, chapters) => req(`/api/books/${id}/chapters`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chapters }),
+  }),
   deleteBook: (id) => req(`/api/books/${id}`, { method: 'DELETE' }),
   generateGlossary: (id) => req(`/api/books/${id}/glossary/generate`, { method: 'POST' }),
   saveGlossary: (id, terms) => req(`/api/books/${id}/glossary`, {
