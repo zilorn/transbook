@@ -157,26 +157,28 @@ def _parse_segment(text: str, count: int) -> list[str | None]:
 # ---------------- 术语表 ----------------
 
 def _sample_text(book: dict, book_id: str, limit: int = 12000) -> str:
-    """从全书中均匀抽取样本用于生成术语表。"""
-    chapters = book.get("chapters", [])
+    """每章抽取开头一段作为术语表样本：预算（limit 字符）均分到各章，
+    单章 500~3000 字符；章节太多、预算不够分时按均匀间隔选章。"""
+    chapters = [ch for ch in book.get("chapters", [])
+                if store.chapter_src_path(book_id, ch["id"]).exists()]
     if not chapters:
         return ""
-    step = max(1, len(chapters) // 6)
+    per = limit // len(chapters)
+    if per < 500:
+        count = max(1, limit // 500)
+        step = len(chapters) / count
+        chapters = [chapters[int(i * step)] for i in range(count)]
+        per = limit // len(chapters)
+    per = min(per, 3000)
     parts: list[str] = []
-    total = 0
-    for ch in chapters[::step]:
+    for ch in chapters:
         p = store.chapter_src_path(book_id, ch["id"])
-        if not p.exists():
-            continue
         raw = p.read_text(encoding="utf-8", errors="replace")
-        if book.get("format") == "epub":
+        if (ch.get("format") or book.get("format")) == "epub":
             _, units, _ = parsing.extract_units(raw)
             raw = "\n".join(t for _, t in units)
-        chunk = raw[:3000]
-        parts.append(chunk)
-        total += len(chunk)
-        if total >= limit:
-            break
+        if raw.strip():
+            parts.append(raw[:per])
     return "\n\n".join(parts)[:limit]
 
 
@@ -188,6 +190,10 @@ async def generate_glossary(book_id: str) -> dict:
     sample = _sample_text(book, book_id)
     if not sample.strip():
         raise DeepSeekError("没有可用于抽取术语的文本")
+    if len(sample.strip()) < 500:
+        raise DeepSeekError(
+            f"全书正文合计仅 {len(sample.strip())} 字符，无法抽取术语；"
+            "请确认源文件正文完整（章节内容是否为占位文本）")
 
     book["status"] = "glossary"
     store.save_book(book)

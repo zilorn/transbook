@@ -59,6 +59,8 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - **多 API Key**：`config.api_keys` 为 `[{key, model, concurrency}]`，`model` 空 /
   `concurrency` 0 表示跟随统一的 `model`/`concurrency`；旧单 `api_key` 配置读取时自动迁移。
   配置接口对 key 脱敏返回（前 6 位 + `...`），原样回传时按位置回代原值。
+- **术语表采样**：`translator._sample_text` 把预算（默认 12000 字符）均分到每章开头
+  （单章 500~3000 字符），章节过多、预算不够分时按均匀间隔选章——覆盖全书而非只抽少数章节。
 - **术语表去重**：重复生成术语时，提示词会附上已有术语让模型避开；生成结果再经
   `translator._merge_glossary` 按规范化 src（去空白、小写）去重合并，已有条目优先保留。
 - **首次翻译自动建术语表**：`translate_book` 启动时若术语表为空且尚无已译章节，
