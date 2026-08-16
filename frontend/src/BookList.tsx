@@ -128,18 +128,25 @@ export default function BookList() {
               </Show>
               <div class="flex gap-1.5 flex-wrap my-2">
                 <span class={BADGE}>{b.format}</span>
-                <span class={`${BADGE_BASE} ${STATUS_BADGE[b.status] ?? 'bg-[#eef0f3] text-muted'}`}>
-                  {STATUS_TEXT[b.status] || b.status}
-                </span>
-                <span class={BADGE}>{b.done}/{b.chapters} 章</span>
-                <Show when={b.glossary_count > 0}>
+                <Show when={b.no_translate}>
+                  <span class={`${BADGE_BASE} bg-[#fef3c7] text-[#92400e]`}>无需翻译</span>
+                </Show>
+                <Show when={!b.no_translate}>
+                  <span class={`${BADGE_BASE} ${STATUS_BADGE[b.status] ?? 'bg-[#eef0f3] text-muted'}`}>
+                    {STATUS_TEXT[b.status] || b.status}
+                  </span>
+                </Show>
+                <span class={BADGE}>{b.no_translate ? `${b.chapters} 章` : `${b.done}/${b.chapters} 章`}</span>
+                <Show when={!b.no_translate && b.glossary_count > 0}>
                   <span class={BADGE}>术语 {b.glossary_count}</span>
                 </Show>
               </div>
-              <div class="h-1.5 bg-[#e5e7eb] rounded-[3px] overflow-hidden my-2">
-                <div class="h-full bg-primary transition-[width] duration-[0.4s]"
-                  style={{ width: `${b.chapters ? (b.done / b.chapters) * 100 : 0}%` }} />
-              </div>
+              <Show when={!b.no_translate}>
+                <div class="h-1.5 bg-[#e5e7eb] rounded-[3px] overflow-hidden my-2">
+                  <div class="h-full bg-primary transition-[width] duration-[0.4s]"
+                    style={{ width: `${b.chapters ? (b.done / b.chapters) * 100 : 0}%` }} />
+                </div>
+              </Show>
               <button class="danger small" onClick={(e) => remove(e, b.id)}>删除</button>
             </div>
           )}

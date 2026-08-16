@@ -159,6 +159,7 @@ def list_books() -> list[dict]:
             "done": done,
             "glossary_count": len(b.get("glossary") or []),
             "source": b.get("source"),
+            "no_translate": bool(b.get("no_translate")),
         })
     out.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
     return out

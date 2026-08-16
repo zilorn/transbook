@@ -61,6 +61,12 @@ export const api = {
     }),
   deleteBook: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}`, { method: 'DELETE' }),
+  setNoTranslate: (id: string, noTranslate: boolean): Promise<{ ok: boolean; no_translate: boolean }> =>
+    req(`/api/books/${id}/no_translate`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ no_translate: noTranslate }),
+    }),
   generateGlossary: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}/glossary/generate`, { method: 'POST' }),
   saveGlossary: (id: string, terms: GlossaryTerm[]): Promise<{ ok: boolean; count: number }> =>

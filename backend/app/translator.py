@@ -343,7 +343,8 @@ async def _translate_chapter(client, cfg, pool: KeyPool, stop, book: dict, ch: d
 async def translate_book(book_id: str, chapter_ids: list[str] | None = None,
                          overwrite: bool = False) -> None:
     book = store.load_book(book_id)
-    if not book:
+    if not book or book.get("no_translate"):
+        # 无需翻译（仅托管）的书直接跳过；路由层已拦截，这里兜底（如队列残留）
         return
     # 首次翻译（尚无译文且术语表为空）时，先生成术语表再翻译
     if not book.get("glossary") and not any(c.get("status") == "done"
@@ -556,7 +557,9 @@ async def _run_queue(stop: asyncio.Event) -> None:
                 break
             entry = entries[0]
             book_id = entry["book_id"]
-            if not store.load_book(book_id):
+            book = store.load_book(book_id)
+            if not book or book.get("no_translate"):
+                # 书已删除或已标记为无需翻译：出队跳过
                 store.dequeue_book(book_id)
                 continue
             if is_running(book_id):

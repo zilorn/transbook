@@ -263,6 +263,29 @@ def delete_book(book_id: str):
     return {"ok": True}
 
 
+class NoTranslateIn(BaseModel):
+    no_translate: bool
+
+
+@app.put("/api/books/{book_id}/no_translate")
+def set_no_translate(book_id: str, body: NoTranslateIn):
+    """标记/取消"无需翻译"：仅托管（阅读/导出/WebDAV），不参与任何翻译任务。"""
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    book["no_translate"] = bool(body.no_translate)
+    if book["no_translate"]:
+        # 标记后移出翻译队列（若正在翻译则由用户先停止，不强制中断）
+        store.dequeue_book(book_id)
+    store.save_book(book)
+    return {"ok": True, "no_translate": book["no_translate"]}
+
+
+def _check_translatable(book: dict) -> None:
+    if book.get("no_translate"):
+        raise HTTPException(400, "该书已标记为无需翻译（仅托管），无法执行翻译相关操作")
+
+
 @app.get("/api/books/{book_id}/chapters/{chapter_id}/content")
 def chapter_content(book_id: str, chapter_id: str, translated: bool = False):
     book = store.load_book(book_id)
@@ -279,8 +302,10 @@ def chapter_content(book_id: str, chapter_id: str, translated: bool = False):
 
 @app.post("/api/books/{book_id}/glossary/generate")
 async def gen_glossary(book_id: str):
-    if not store.load_book(book_id):
+    book = store.load_book(book_id)
+    if not book:
         raise HTTPException(404, "书籍不存在")
+    _check_translatable(book)
     if not translator.start_glossary(book_id):
         raise HTTPException(409, "该书已有任务在运行")
     return {"ok": True}
@@ -493,6 +518,7 @@ async def start_translate(book_id: str, body: TranslateIn | None = None):
     book = store.load_book(book_id)
     if not book:
         raise HTTPException(404, "书籍不存在")
+    _check_translatable(book)
     body = body or TranslateIn()
     if not translator.start_translation(book_id, body.chapter_ids, body.overwrite):
         raise HTTPException(409, "该书已有任务在运行")
@@ -510,6 +536,7 @@ async def retranslate_chapter(book_id: str, chapter_id: str):
     book = store.load_book(book_id)
     if not book:
         raise HTTPException(404, "书籍不存在")
+    _check_translatable(book)
     if not any(c["id"] == chapter_id for c in book["chapters"]):
         raise HTTPException(404, "章节不存在")
     if not translator.start_translation(book_id, [chapter_id], overwrite=True):
@@ -520,8 +547,10 @@ async def retranslate_chapter(book_id: str, chapter_id: str):
 @app.post("/api/books/{book_id}/title/retranslate")
 async def retranslate_title(book_id: str):
     """重翻书名（不影响章节）。"""
-    if not store.load_book(book_id):
+    book = store.load_book(book_id)
+    if not book:
         raise HTTPException(404, "书籍不存在")
+    _check_translatable(book)
     if not translator.start_title_retranslate(book_id, "book"):
         raise HTTPException(409, "该书已有任务在运行")
     return {"ok": True}
@@ -533,6 +562,7 @@ async def retranslate_toc(book_id: str):
     book = store.load_book(book_id)
     if not book:
         raise HTTPException(404, "书籍不存在")
+    _check_translatable(book)
     if not translator.start_title_retranslate(book_id, "toc"):
         raise HTTPException(409, "该书已有任务在运行")
     return {"ok": True}
@@ -553,8 +583,10 @@ def get_queue():
 
 @app.post("/api/queue")
 def add_to_queue(body: QueueIn):
-    if not store.load_book(body.book_id):
+    book = store.load_book(body.book_id)
+    if not book:
         raise HTTPException(404, "书籍不存在")
+    _check_translatable(book)
     q = store.enqueue_book(body.book_id, body.chapter_ids, body.overwrite)
     return {"ok": True, "entries": q, "running": translator.queue_running()}
 

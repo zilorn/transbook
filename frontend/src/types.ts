@@ -42,6 +42,8 @@ export interface BookSummary {
   done: number
   glossary_count: number
   source?: BookSource | null
+  // 无需翻译标记：仅托管（阅读/导出/WebDAV），不参与翻译
+  no_translate: boolean
 }
 
 export type ChapterStatus = 'pending' | 'translating' | 'done' | 'error'
@@ -80,6 +82,8 @@ export interface Book {
   glossary: GlossaryTerm[]
   chapters: Chapter[]
   source?: BookSource | null
+  // 无需翻译标记：仅托管（阅读/导出/WebDAV），不参与翻译
+  no_translate?: boolean
 }
 
 // 追加章节时提交的条目

@@ -264,23 +264,32 @@ export default function BookDetail() {
           <div>
             <div class="flex items-center gap-2 mt-3 mb-1">
               <h2 class="text-[1.5em] font-bold m-0">{b().title_translated || b().title}</h2>
-              <button class="link p-0 inline-flex items-center" title="重翻书名"
-                disabled={busy() || b().running}
-                onClick={() => act(() => api.retranslateTitle(b().id), '正在重翻书名…')}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                  <polyline points="21 3 21 9 15 9" />
-                </svg>
-              </button>
+              <Show when={!b().no_translate}>
+                <button class="link p-0 inline-flex items-center" title="重翻书名"
+                  disabled={busy() || b().running}
+                  onClick={() => act(() => api.retranslateTitle(b().id), '正在重翻书名…')}>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                    <polyline points="21 3 21 9 15 9" />
+                  </svg>
+                </button>
+              </Show>
             </div>
             <Show when={b().title_translated && b().title_translated !== b().title}>
               <p class="text-muted text-[13px] m-0">原名：{b().title}</p>
             </Show>
             <div class="flex gap-1.5 flex-wrap my-2">
               <span class={BADGE}>{b().format}</span>
-              <span class={BADGE}>{doneCount()}/{b().chapters.length} 章</span>
-              <span class={BADGE}>状态：{b().status}{b().running ? '（运行中）' : ''}</span>
+              <span class={BADGE}>
+                {b().no_translate ? `${b().chapters.length} 章` : `${doneCount()}/${b().chapters.length} 章`}
+              </span>
+              <Show when={!b().no_translate}>
+                <span class={BADGE}>状态：{b().status}{b().running ? '（运行中）' : ''}</span>
+              </Show>
+              <Show when={b().no_translate}>
+                <span class={`${BADGE_BASE} bg-[#fef3c7] text-[#92400e]`}>无需翻译（仅托管）</span>
+              </Show>
               <Show when={b().source}>
                 <a class={`${BADGE} no-underline hover:text-primary`}
                   href={b().source!.url} target="_blank" rel="noreferrer"
@@ -289,22 +298,26 @@ export default function BookDetail() {
                 </a>
               </Show>
             </div>
-            <div class="h-2.5 bg-[#e5e7eb] rounded-[3px] overflow-hidden my-2">
-              <div class="h-full bg-primary transition-[width] duration-[0.4s]"
-                style={{ width: `${b().chapters.length ? (doneCount() / b().chapters.length) * 100 : 0}%` }} />
-            </div>
+            <Show when={!b().no_translate}>
+              <div class="h-2.5 bg-[#e5e7eb] rounded-[3px] overflow-hidden my-2">
+                <div class="h-full bg-primary transition-[width] duration-[0.4s]"
+                  style={{ width: `${b().chapters.length ? (doneCount() / b().chapters.length) * 100 : 0}%` }} />
+              </div>
+            </Show>
           </div>
 
           <div class="flex gap-2.5 my-4 items-center flex-wrap">
-            <button class="primary" disabled={busy() || b().running}
-              onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
-              {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
-            </button>
-            <button disabled={busy() || b().running}
-              onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
-              排队全部重译
-            </button>
-            <button class="link" onClick={() => navigate('/queue')}>前往翻译队列 →</button>
+            <Show when={!b().no_translate}>
+              <button class="primary" disabled={busy() || b().running}
+                onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
+                {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
+              </button>
+              <button disabled={busy() || b().running}
+                onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
+                排队全部重译
+              </button>
+              <button class="link" onClick={() => navigate('/queue')}>前往翻译队列 →</button>
+            </Show>
             <Show when={b().source}>
               <button disabled={busy() || b().running || updating()}
                 title="从来源站点检查并抓取最新章节"
@@ -312,13 +325,23 @@ export default function BookDetail() {
                 {updating() ? '正在更新…' : '更新章节'}
               </button>
             </Show>
+            <Show when={!b().no_translate}>
+              <button disabled={busy() || b().running}
+                onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
+                生成术语表
+              </button>
+              <button disabled={busy() || b().running}
+                onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
+                重翻目录
+              </button>
+            </Show>
             <button disabled={busy() || b().running}
-              onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
-              生成术语表
-            </button>
-            <button disabled={busy() || b().running}
-              onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
-              重翻目录
+              title="标记后仅用于托管（阅读/导出/WebDAV），不再参与任何翻译任务"
+              onClick={() => act(
+                () => api.setNoTranslate(b().id, !b().no_translate),
+                b().no_translate ? '已取消「无需翻译」标记' : '已标记为无需翻译（仅托管）'
+              ).then(() => { if (b().no_translate && tab() === 'glossary') setTab('chapters') })}>
+              {b().no_translate ? '取消「无需翻译」' : '标记为无需翻译'}
             </button>
             <a class="inline-block px-[14px] py-[7px] border border-line rounded-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
               href={api.exportUrl(b().id, 'txt')} download="">导出 TXT</a>
@@ -334,10 +357,12 @@ export default function BookDetail() {
               onClick={() => setTab('chapters')}>
               章节（{b().chapters.length}）
             </button>
-            <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'glossary' ? 'border-b-2 border-primary text-primary' : ''}`}
-              onClick={() => setTab('glossary')}>
-              术语表（{glossary().length}）{glossaryDirty() ? ' *' : ''}
-            </button>
+            <Show when={!b().no_translate}>
+              <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'glossary' ? 'border-b-2 border-primary text-primary' : ''}`}
+                onClick={() => setTab('glossary')}>
+                术语表（{glossary().length}）{glossaryDirty() ? ' *' : ''}
+              </button>
+            </Show>
             <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'add' ? 'border-b-2 border-primary text-primary' : ''}`}
               onClick={() => setTab('add')}>
               追加章节
@@ -360,56 +385,62 @@ export default function BookDetail() {
             </div>
             <div class="overflow-x-auto">
               <table class="table-fixed" style={{
-                width: `${colW().idx + colW().title + STATUS_COL_W + colW().ops}px`,
+                width: b().no_translate
+                  ? `${colW().idx + colW().title}px`
+                  : `${colW().idx + colW().title + STATUS_COL_W + colW().ops}px`,
                 'min-width': '100%',
               }}>
                 <colgroup>
                   <col style={{ width: `${colW().idx}px` }} />
                   <col style={{ width: `${colW().title}px` }} />
-                  <col style={{ width: `${STATUS_COL_W}px` }} />
-                  <col style={{ width: `${colW().ops}px` }} />
+                  <Show when={!b().no_translate}>
+                    <col style={{ width: `${STATUS_COL_W}px` }} />
+                    <col style={{ width: `${colW().ops}px` }} />
+                  </Show>
                 </colgroup>
                 <thead>
                   <tr>
                     <th class="relative">#{colResizer('idx', 40)}</th>
-                    <th class="relative">标题（译名 / 原名）{colResizer('title', 160)}</th>
-                    <th class="whitespace-nowrap">
-                      <div ref={statusMenuRef} class="inline-block">
-                        <button type="button"
-                          class={`border-0 bg-transparent p-0 font-bold cursor-pointer inline-flex items-center gap-[3px] ${statusFilter().size > 0 ? 'text-primary' : 'text-inherit'}`}
-                          title="按状态筛选"
-                          onClick={toggleStatusMenu}>
-                          状态
-                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
-                            class={`transition-transform ${statusMenuOpen() ? 'rotate-180' : ''}`}>
-                            <path d="M12 16l-6-6h12z" />
-                          </svg>
-                        </button>
-                        <Show when={statusMenuOpen()}>
-                          {/* fixed 定位，避免被 overflow-x-auto 的表格外层裁剪 */}
-                          <div class="fixed z-20 bg-card border border-line rounded-[6px] shadow-lg py-1 min-w-[130px] font-normal text-left"
-                            style={{ top: `${statusMenuPos().top}px`, left: `${statusMenuPos().left}px` }}>
-                            <For each={['pending', 'translating', 'done']}>
-                              {(s) => (
-                                <label class="flex items-center gap-2 px-3 py-[6px] cursor-pointer text-[13px] hover:bg-[#f3f4f6]">
-                                  <input type="checkbox" checked={statusFilter().has(s)}
-                                    onChange={() => toggleStatusFilter(s)} />
-                                  {CH_STATUS[s]}（{statusCount(s)}）
-                                </label>
-                              )}
-                            </For>
-                            <Show when={statusFilter().size > 0}>
-                              <button type="button"
-                                class="border-0 bg-transparent w-full text-left px-3 py-[6px] text-[13px] text-muted hover:bg-[#f3f4f6] cursor-pointer"
-                                onClick={() => setStatusFilter(new Set<string>())}>
-                                清除筛选
-                              </button>
-                            </Show>
-                          </div>
-                        </Show>
-                      </div>
-                    </th>
-                    <th class="relative">{colResizer('ops', 72)}</th>
+                    <th class="relative">{b().no_translate ? '标题' : '标题（译名 / 原名）'}{colResizer('title', 160)}</th>
+                    <Show when={!b().no_translate}>
+                      <th class="whitespace-nowrap">
+                        <div ref={statusMenuRef} class="inline-block">
+                          <button type="button"
+                            class={`border-0 bg-transparent p-0 font-bold cursor-pointer inline-flex items-center gap-[3px] ${statusFilter().size > 0 ? 'text-primary' : 'text-inherit'}`}
+                            title="按状态筛选"
+                            onClick={toggleStatusMenu}>
+                            状态
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
+                              class={`transition-transform ${statusMenuOpen() ? 'rotate-180' : ''}`}>
+                              <path d="M12 16l-6-6h12z" />
+                            </svg>
+                          </button>
+                          <Show when={statusMenuOpen()}>
+                            {/* fixed 定位，避免被 overflow-x-auto 的表格外层裁剪 */}
+                            <div class="fixed z-20 bg-card border border-line rounded-[6px] shadow-lg py-1 min-w-[130px] font-normal text-left"
+                              style={{ top: `${statusMenuPos().top}px`, left: `${statusMenuPos().left}px` }}>
+                              <For each={['pending', 'translating', 'done']}>
+                                {(s) => (
+                                  <label class="flex items-center gap-2 px-3 py-[6px] cursor-pointer text-[13px] hover:bg-[#f3f4f6]">
+                                    <input type="checkbox" checked={statusFilter().has(s)}
+                                      onChange={() => toggleStatusFilter(s)} />
+                                    {CH_STATUS[s]}（{statusCount(s)}）
+                                  </label>
+                                )}
+                              </For>
+                              <Show when={statusFilter().size > 0}>
+                                <button type="button"
+                                  class="border-0 bg-transparent w-full text-left px-3 py-[6px] text-[13px] text-muted hover:bg-[#f3f4f6] cursor-pointer"
+                                  onClick={() => setStatusFilter(new Set<string>())}>
+                                  清除筛选
+                                </button>
+                              </Show>
+                            </div>
+                          </Show>
+                        </div>
+                      </th>
+                      <th class="relative">{colResizer('ops', 72)}</th>
+                    </Show>
                   </tr>
                 </thead>
                 <tbody>
@@ -431,20 +462,22 @@ export default function BookDetail() {
                             </button>
                           </Show>
                         </td>
-                        <td class="whitespace-nowrap overflow-hidden">
-                          <span class={`${BADGE_BASE} whitespace-nowrap ${STATUS_BADGE[c.status] ?? 'bg-[#eef0f3] text-muted'}`}>
-                            {CH_STATUS[c.status] || c.status}
-                          </span>
-                          <Show when={c.error}>
-                            <div class="text-danger text-[12px] truncate" title={c.error ?? undefined}>{c.error}</div>
-                          </Show>
-                        </td>
-                        <td>
-                          <button class="small whitespace-nowrap" disabled={busy() || b().running}
-                            onClick={() => act(() => api.retranslateChapter(b().id, c.id))}>
-                            {c.status === 'done' ? '重译' : '翻译'}
-                          </button>
-                        </td>
+                        <Show when={!b().no_translate}>
+                          <td class="whitespace-nowrap overflow-hidden">
+                            <span class={`${BADGE_BASE} whitespace-nowrap ${STATUS_BADGE[c.status] ?? 'bg-[#eef0f3] text-muted'}`}>
+                              {CH_STATUS[c.status] || c.status}
+                            </span>
+                            <Show when={c.error}>
+                              <div class="text-danger text-[12px] truncate" title={c.error ?? undefined}>{c.error}</div>
+                            </Show>
+                          </td>
+                          <td>
+                            <button class="small whitespace-nowrap" disabled={busy() || b().running}
+                              onClick={() => act(() => api.retranslateChapter(b().id, c.id))}>
+                              {c.status === 'done' ? '重译' : '翻译'}
+                            </button>
+                          </td>
+                        </Show>
                       </tr>
                     )}
                   </For>

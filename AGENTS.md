@@ -74,6 +74,11 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   15 字，可为空）；翻译提示词中以 `src = dst（note）` 形式附上，供模型参考。
 - **首次翻译自动建术语表**：`translate_book` 启动时若术语表为空且尚无已译章节，
   会先自动执行一次 `generate_glossary` 再进入翻译；生成失败不阻塞翻译（无术语表继续）。
+- **无需翻译标记**：`book.json` 的 `no_translate` 布尔字段（缺省 false）表示"仅托管"
+  （阅读/导出/WebDAV，如托管本身已是译文的书）。标记后所有翻译入口（整书翻译、单章重译、
+  重翻书名/目录、生成术语表、入队）一律 400 拒绝；标记时自动移出翻译队列，
+  队列执行器遇到残留条目也会跳过出队。详情页有开关按钮，书库/详情页显示琥珀色徽章；
+  标记后前端隐藏全部翻译相关 UI（进度条、状态徽章、章节状态/操作列、术语表标签页）。
 - **并发**：`translator.KeyPool` 把每个 key 按自身并发数放入 `asyncio.Queue` 槽位，
   取用即占用、归还即释放，请求按 key 自动分摊，总并发 = 各 key 有效并发之和。
   章节之间并发、章节内分段并发，按索引重组，不会错乱。停止通过 `asyncio.Event` 协作式中断。
@@ -125,6 +130,7 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   base_url、model、target_lang、concurrency、max_segment_chars）
 - `POST /api/books` — 上传 epub/txt（multipart）
 - `GET /api/books` / `GET /api/books/{id}` / `DELETE /api/books/{id}`
+- `PUT /api/books/{id}/no_translate` — 标记/取消"无需翻译"（仅托管；标记后移出翻译队列）
 - `POST /api/books/{id}/chapters/preview` — 解析待追加的 txt/epub（multipart），
   返回章节清单（含与已有章节的查重标记 duplicate），不写盘，供前端勾选
 - `POST /api/books/{id}/chapters` — 追加章节（JSON: `{chapters: [{title, body, format}]}`，
