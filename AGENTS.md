@@ -23,6 +23,7 @@ backend/
     deepseek.py    # DeepSeek API 客户端（chat 支持按 KeyPool 条目调用）
     translator.py  # 术语表生成 + KeyPool 多 key 并发翻译流水线 + 队列执行器（asyncio）
     syosetu.py     # syosetu.com 爬虫：搜索/目录正文抓取/增量更新（串行限速，逐章落盘）
+    kakuyomu.py    # kakuyomu.jp 爬虫：GraphQL 搜索/目录 + HTML 章节正文抓取/增量更新
     webdav.py      # 只读 WebDAV（/webdav/）：有译文的书打包 EPUB 暴露给阅读软件
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
@@ -89,6 +90,12 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   3 次（规避风控）。爬来的书 `book.json` 顶层带 `source = {site, url, ncode}`
   （详情页 URL），章节带 `src_ep` 话数编号；正文按 `<p>` 一行一段存为 txt 章节。
   抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
+- **kakuyomu 爬虫**：`kakuyomu.py` 抓 kakuyomu.jp，风控约定同 syosetu（请求统一经
+  `_request` 出口）。搜索与目录走官方前端同用的 GraphQL 接口（`POST /graphql`）：
+  搜索 `searchWorks` 支持 `GENRES` 多选过滤（14 个ジャンル），目录 `tableOfContents`
+  一次返回全部话数（含分章作品，拍平为单一章节流）；章节正文解析 HTML 页
+  `.widget-episodeBody`（`<p>` 一段一行，去 ruby 注音，标题取 `p.widget-episodeTitle`）。
+  书的 `source = {site, url, work_id}`，章节 `src_ep` 存 episode ID 字符串（非数字序号）。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，
   写操作 405），与 API 同端口 8300，`config.webdav_enabled` 开关（默认关），未开启时 404。
   只列出有译文的书籍（`list_books` 中 done>0），文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
@@ -110,6 +117,10 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - `POST /api/syosetu/fetch` — 按作品链接/N コード建书并后台爬取（逐章落盘）
 - `GET /api/syosetu/status/{book_id}` / `POST /api/syosetu/stop/{book_id}` — 爬取进度 / 停止
 - `POST /api/books/{id}/syosetu/update` — 增量更新，只抓最新章节
+- `GET /api/kakuyomu/search?q=&genre=`（genre 可重复多选）/ `GET /api/kakuyomu/genres`
+- `POST /api/kakuyomu/fetch` — 按作品/章节链接或作品 ID 建书并后台爬取（逐章落盘）
+- `GET /api/kakuyomu/status/{book_id}` / `POST /api/kakuyomu/stop/{book_id}` — 爬取进度 / 停止
+- `POST /api/books/{id}/kakuyomu/update` — 增量更新，只抓最新章节
 - `POST /api/books/{id}/translate`（body: `{chapter_ids?, overwrite?}`）/ `POST .../stop`
 - `GET/POST /api/queue`、`DELETE /api/queue/{book_id}` — 翻译队列查看/入队（同书替换）/移除
 - `POST /api/queue/start` / `POST /api/queue/stop` — 一键开始 / 停止队列（逐本顺序执行）

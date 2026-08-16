@@ -5,6 +5,7 @@ import type {
   Config,
   CrawlStatus,
   GlossaryTerm,
+  KakuyomuResult,
   NewChapter,
   QueueStatus,
   SyosetuResult,
@@ -110,5 +111,20 @@ export const api = {
     req(`/api/syosetu/stop/${id}`, { method: 'POST' }),
   syosetuUpdate: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}/syosetu/update`, { method: 'POST' }),
+  kakuyomuGenres: (): Promise<{ genres: Record<string, string> }> =>
+    req('/api/kakuyomu/genres'),
+  kakuyomuSearch: (q: string, genres: string[]): Promise<{ results: KakuyomuResult[] }> =>
+    req(`/api/kakuyomu/search?q=${encodeURIComponent(q)}${genres.map((g) => `&genre=${g}`).join('')}`),
+  kakuyomuFetch: (url: string): Promise<Book> =>
+    req('/api/kakuyomu/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    }),
+  kakuyomuStatus: (id: string): Promise<CrawlStatus> => req(`/api/kakuyomu/status/${id}`),
+  kakuyomuStop: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/kakuyomu/stop/${id}`, { method: 'POST' }),
+  kakuyomuUpdate: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/books/${id}/kakuyomu/update`, { method: 'POST' }),
   exportUrl: (id: string, fmt: string): string => `/api/books/${id}/export?fmt=${fmt}`,
 }

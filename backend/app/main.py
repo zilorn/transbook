@@ -4,12 +4,12 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import parsing, store, syosetu, translator, webdav
+from . import kakuyomu, parsing, store, syosetu, translator, webdav
 
 app = FastAPI(title="TranLatexBook")
 app.include_router(webdav.router)
@@ -256,6 +256,7 @@ def get_book(book_id: str):
 def delete_book(book_id: str):
     translator.stop_translation(book_id)
     syosetu.stop_crawl(book_id)
+    kakuyomu.stop_crawl(book_id)
     store.dequeue_book(book_id)
     store.delete_book(book_id)
     return {"ok": True}
@@ -370,6 +371,79 @@ async def syosetu_update(book_id: str):
     if translator.is_running(book_id):
         raise HTTPException(409, "翻译进行中，请先停止再更新章节")
     if not syosetu.start_update(book_id):
+        raise HTTPException(409, "该书已有爬取任务在运行")
+    return {"ok": True}
+
+
+# ---------- kakuyomu 爬虫 ----------
+
+@app.get("/api/kakuyomu/search")
+async def kakuyomu_search(q: str, genre: list[str] = Query(default=[])):
+    if not q.strip():
+        return {"results": []}
+    try:
+        return {"results": await kakuyomu.search(q.strip(), genre),
+                "genres": kakuyomu.GENRES}
+    except Exception as e:
+        raise HTTPException(502, f"搜索失败: {e}")
+
+
+@app.get("/api/kakuyomu/genres")
+def kakuyomu_genres():
+    return {"genres": kakuyomu.GENRES}
+
+
+@app.post("/api/kakuyomu/fetch")
+async def kakuyomu_fetch(body: FetchIn):
+    """按作品/章节链接或作品 ID 创建书籍并启动后台爬取（逐章落盘）。"""
+    work_id = kakuyomu.parse_work_id(body.url)
+    if not work_id:
+        raise HTTPException(400, "无法识别 kakuyomu.jp 作品链接或作品 ID")
+    book_id = store.new_book_id()
+    store.book_dir(book_id)
+    book = {
+        "id": book_id,
+        "title": work_id,  # 书名在爬取到目录后回填
+        "title_translated": None,
+        "author": "",
+        "format": "txt",
+        "source_file": "",
+        "created_at": store.now(),
+        "status": "ready",
+        "error": None,
+        "glossary": [],
+        "chapters": [],
+        "source": {"site": "kakuyomu",
+                   "url": f"https://kakuyomu.jp/works/{work_id}",
+                   "work_id": work_id},
+    }
+    store.save_book(book)
+    kakuyomu.start_crawl(book_id)
+    return book
+
+
+@app.get("/api/kakuyomu/status/{book_id}")
+def kakuyomu_status(book_id: str):
+    return kakuyomu.progress(book_id)
+
+
+@app.post("/api/kakuyomu/stop/{book_id}")
+async def kakuyomu_stop(book_id: str):
+    kakuyomu.stop_crawl(book_id)
+    return {"ok": True}
+
+
+@app.post("/api/books/{book_id}/kakuyomu/update")
+async def kakuyomu_update(book_id: str):
+    """增量更新：只抓本地缺失的最新章节。"""
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    if not book.get("source"):
+        raise HTTPException(400, "该书没有网络来源，无法更新")
+    if translator.is_running(book_id):
+        raise HTTPException(409, "翻译进行中，请先停止再更新章节")
+    if not kakuyomu.start_update(book_id):
         raise HTTPException(409, "该书已有爬取任务在运行")
     return {"ok": True}
 

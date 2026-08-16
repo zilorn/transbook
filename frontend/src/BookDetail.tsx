@@ -234,11 +234,14 @@ export default function BookDetail() {
     setUpdating(true)
     setError('')
     setMsg('')
+    const isKakuyomu = book()?.source?.site === 'kakuyomu'
+    const updateApi = isKakuyomu ? api.kakuyomuUpdate : api.syosetuUpdate
+    const statusApi = isKakuyomu ? api.kakuyomuStatus : api.syosetuStatus
     try {
-      await api.syosetuUpdate(bookId)
+      await updateApi(bookId)
       for (;;) {
         await new Promise(r => setTimeout(r, 2000))
-        const st = await api.syosetuStatus(bookId)
+        const st = await statusApi(bookId)
         if (!st.running) {
           if (st.error) setError(`更新失败：${st.error}（已抓部分保留）`)
           else setMsg(st.added > 0 ? `已新增 ${st.added} 章` : '已是最新，没有新章节')
@@ -282,7 +285,7 @@ export default function BookDetail() {
                 <a class={`${BADGE} no-underline hover:text-primary`}
                   href={b().source!.url} target="_blank" rel="noreferrer"
                   title={`作品页：${b().source!.url}`}>
-                  来源：{b().source!.site}.com ↗
+                  来源：{b().source!.site}{b().source!.site === 'kakuyomu' ? '.jp' : '.com'} ↗
                 </a>
               </Show>
             </div>

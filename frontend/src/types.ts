@@ -21,11 +21,12 @@ export interface Config {
 
 export type BookStatus = 'ready' | 'glossary' | 'translating' | 'paused' | 'done' | 'error'
 
-// 书籍网络来源（目前仅 syosetu）；上传的书没有该字段
+// 书籍网络来源（syosetu / kakuyomu）；上传的书没有该字段
 export interface BookSource {
   site: string
   url: string
-  ncode: string
+  ncode?: string
+  work_id?: string
 }
 
 // GET /api/books 的列表条目
@@ -131,6 +132,18 @@ export interface SyosetuResult {
   synopsis: string
   status: string
   episodes: number
+}
+
+// GET /api/kakuyomu/search 的单条结果
+export interface KakuyomuResult {
+  work_id: string
+  url: string
+  title: string
+  author: string
+  synopsis: string
+  status: string
+  episodes: number
+  genre: string
 }
 
 // GET /api/syosetu/status/{book_id} 的爬取进度
