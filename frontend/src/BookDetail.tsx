@@ -49,6 +49,30 @@ export default function BookDetail() {
   const [appendPrev, setAppendPrev] = createSignal<AppendPreview | null>(null)
   const [chapterQuery, setChapterQuery] = createSignal('')
 
+  // ---- 目录表格列宽：# / 标题 / 操作列可拖拽调整，状态列固定不可调 ----
+  const STATUS_COL_W = 96
+  const [colW, setColW] = createSignal({ idx: 52, title: 620, ops: 88 })
+  const startColResize = (e: PointerEvent, key: 'idx' | 'title' | 'ops', min: number) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = colW()[key]
+    const prevSelect = document.body.style.userSelect
+    document.body.style.userSelect = 'none'
+    const move = (ev: PointerEvent) =>
+      setColW(w => ({ ...w, [key]: Math.max(min, startW + ev.clientX - startX) }))
+    const up = () => {
+      document.body.style.userSelect = prevSelect
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const colResizer = (key: 'idx' | 'title' | 'ops', min: number) => (
+    <span class="absolute top-0 right-[-4px] z-[1] h-full w-[8px] cursor-col-resize hover:bg-primary/40"
+      onPointerDown={(e) => startColResize(e, key, min)} />
+  )
+
   // 章节搜索：按原标题/译后标题过滤（不区分大小写），保留原序号
   const filteredChapters = () =>
     (book()?.chapters || [])
@@ -303,42 +327,64 @@ export default function BookDetail() {
                 <button class="small" onClick={() => setChapterQuery('')}>清除</button>
               </Show>
             </div>
-            <table>
-              <thead>
-                <tr><th>#</th><th>原标题</th><th>译后标题</th><th>状态</th><th></th></tr>
-              </thead>
-              <tbody>
-                <For each={filteredChapters()}>
-                  {({ c, n }) => (
-                    <tr>
-                      <td>{n}</td>
-                      <td>
-                        <button class="link p-0 text-left text-[14px]" title="预览原文"
-                          onClick={() => openPreview(c, false)}>{c.title}</button>
-                      </td>
-                      <td>
-                        <Show when={c.title_translated} fallback="—">
-                          <button class="link p-0 text-left text-[14px]" title="预览译文"
-                            onClick={() => openPreview(c, true)}>{c.title_translated}</button>
-                        </Show>
-                      </td>
-                      <td>
-                        <span class={`${BADGE_BASE} ${STATUS_BADGE[c.status] ?? 'bg-[#eef0f3] text-muted'}`}>
-                          {CH_STATUS[c.status] || c.status}
-                        </span>
-                        <Show when={c.error}><div class="text-danger text-[12px]">{c.error}</div></Show>
-                      </td>
-                      <td>
-                        <button class="small" disabled={busy() || b().running}
-                          onClick={() => act(() => api.retranslateChapter(b().id, c.id))}>
-                          {c.status === 'done' ? '重译' : '翻译'}
-                        </button>
-                      </td>
-                    </tr>
-                  )}
-                </For>
-              </tbody>
-            </table>
+            <div class="overflow-x-auto">
+              <table class="table-fixed" style={{
+                width: `${colW().idx + colW().title + STATUS_COL_W + colW().ops}px`,
+                'min-width': '100%',
+              }}>
+                <colgroup>
+                  <col style={{ width: `${colW().idx}px` }} />
+                  <col style={{ width: `${colW().title}px` }} />
+                  <col style={{ width: `${STATUS_COL_W}px` }} />
+                  <col style={{ width: `${colW().ops}px` }} />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th class="relative">#{colResizer('idx', 40)}</th>
+                    <th class="relative">标题（译名 / 原名）{colResizer('title', 160)}</th>
+                    <th class="whitespace-nowrap">状态</th>
+                    <th class="relative">{colResizer('ops', 72)}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={filteredChapters()}>
+                    {({ c, n }) => (
+                      <tr>
+                        <td class="truncate">{n}</td>
+                        <td class="overflow-hidden">
+                          <button class="link p-0 block w-full truncate text-left text-[14px]"
+                            title={c.title_translated ? '预览译文' : '预览原文'}
+                            onClick={() => openPreview(c, !!c.title_translated)}>
+                            {c.title_translated || c.title}
+                          </button>
+                          <Show when={c.title_translated && c.title_translated !== c.title}>
+                            <button class="link p-0 block w-full truncate text-left text-[12px] text-muted"
+                              title="预览原文"
+                              onClick={() => openPreview(c, false)}>
+                              {c.title}
+                            </button>
+                          </Show>
+                        </td>
+                        <td class="whitespace-nowrap overflow-hidden">
+                          <span class={`${BADGE_BASE} whitespace-nowrap ${STATUS_BADGE[c.status] ?? 'bg-[#eef0f3] text-muted'}`}>
+                            {CH_STATUS[c.status] || c.status}
+                          </span>
+                          <Show when={c.error}>
+                            <div class="text-danger text-[12px] truncate" title={c.error ?? undefined}>{c.error}</div>
+                          </Show>
+                        </td>
+                        <td>
+                          <button class="small whitespace-nowrap" disabled={busy() || b().running}
+                            onClick={() => act(() => api.retranslateChapter(b().id, c.id))}>
+                            {c.status === 'done' ? '重译' : '翻译'}
+                          </button>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </div>
             <Show when={filteredChapters().length === 0}>
               <p class="text-muted text-center py-[30px]">没有匹配的章节。</p>
             </Show>
