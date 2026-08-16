@@ -1,7 +1,8 @@
-"""只读 WebDAV：把有译文的书籍打包为 EPUB，暴露给阅读软件（PROPFIND/GET/HEAD）。
+"""只读 WebDAV：把有章节的书籍打包为 EPUB，暴露给阅读软件（PROPFIND/GET/HEAD）。
 
 - 挂载在 /webdav/（与 API 同一端口 8300），通过 config.webdav_enabled 开关。
 - 只支持阅读软件必需的读操作；写操作一律 405。
+- 未翻译的章节回退原文，可托管本身已是译文的书籍。
 - EPUB 按需生成并缓存在 books/<id>/webdav.epub，源文件更新后自动重建。
 """
 from __future__ import annotations
@@ -59,10 +60,13 @@ def _book_mtime(book: dict) -> float:
 
 
 def list_dav_books() -> list[dict]:
-    """WebDAV 根目录下的书目：[{name, book, mtime}]，只收有译文的。"""
+    """WebDAV 根目录下的书目：[{name, book, mtime}]，收全部有章节的书。
+
+    未翻译的章节回退原文（collect_chapters），便于托管本身已是译文的书籍。
+    """
     out, used = [], set()
     for s in store.list_books():
-        if not s.get("done"):
+        if not s.get("chapters"):
             continue
         book = store.load_book(s["id"])
         if not book:

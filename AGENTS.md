@@ -27,7 +27,7 @@ backend/
       tasks.py     # 共享抓取任务管理 CrawlRunner（整书抓取/增量更新/进度/停止/逐章落盘）
       syosetu.py   # syosetu.com：搜索/排行榜/目录/正文解析（站点专属逻辑）
       kakuyomu.py  # kakuyomu.jp：GraphQL 搜索/目录 + __NEXT_DATA__ 排行榜 + HTML 正文解析（站点专属逻辑）
-    webdav.py      # 只读 WebDAV（/webdav/）：有译文的书打包 EPUB 暴露给阅读软件
+    webdav.py      # 只读 WebDAV（/webdav/）：有章节的书打包 EPUB 暴露给阅读软件
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
   src/index.tsx  App.tsx（HashRouter + 侧边栏布局）  state.ts（全局 config/设置弹窗信号）
@@ -114,7 +114,8 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   显示名一律后端出中文（`syosetu._GENRE_TEXT_ZH`、`kakuyomu.GENRES` 值），前端不做映射。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，
   写操作 405），与 API 同端口 8300，`config.webdav_enabled` 开关（默认关），未开启时 404。
-  只列出有译文的书籍（`list_books` 中 done>0），文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
+  列出全部有章节的书籍（未翻译章节回退原文，可托管本身已是译文的书），
+  文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
   EPUB 按需生成并缓存为 `books/<id>/webdav.epub`，源文件（book.json/章节）更新后自动重建。
   无认证，仅供局域网使用。
 
