@@ -9,7 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import kakuyomu, parsing, store, syosetu, translator, webdav
+from . import parsing, store, translator, webdav
+from .crawlers import kakuyomu, syosetu
 
 app = FastAPI(title="TranLatexBook")
 app.include_router(webdav.router)

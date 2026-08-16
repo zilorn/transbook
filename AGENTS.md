@@ -22,8 +22,11 @@ backend/
     parsing.py     # txt 正则分章、epub 解析/生成、HTML 翻译单元抽取
     deepseek.py    # DeepSeek API 客户端（chat 支持按 KeyPool 条目调用）
     translator.py  # 术语表生成 + KeyPool 多 key 并发翻译流水线 + 队列执行器（asyncio）
-    syosetu.py     # syosetu.com 爬虫：搜索/目录正文抓取/增量更新（串行限速，逐章落盘）
-    kakuyomu.py    # kakuyomu.jp 爬虫：GraphQL 搜索/目录 + HTML 章节正文抓取/增量更新
+    crawlers/      # 站点爬虫包（main.py 经 `from .crawlers import syosetu, kakuyomu` 使用）
+      http.py      # 共享限速 HTTP 出口 HttpGate（串行 + 抖动 + 风控退避），每站点一个实例
+      tasks.py     # 共享抓取任务管理 CrawlRunner（整书抓取/增量更新/进度/停止/逐章落盘）
+      syosetu.py   # syosetu.com：搜索/目录/正文解析（站点专属逻辑）
+      kakuyomu.py  # kakuyomu.jp：GraphQL 搜索/目录 + HTML 正文解析（站点专属逻辑）
     webdav.py      # 只读 WebDAV（/webdav/）：有译文的书打包 EPUB 暴露给阅读软件
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
@@ -85,17 +88,20 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   用 BeautifulSoup 抽取 body 内容重建干净文档（带 xml 声明的完整文档会让 ebooklib 崩溃）。
 - **FastAPI 路由**：调用 `asyncio.create_task` 的接口必须是 `async def`
   （同步 def 会跑在线程池，没有 running event loop）。
-- **syosetu 爬虫**：`syosetu.py` 抓 syosetu.com。所有请求经 `_get` 单一出口：
-  模块级锁串行、相邻请求间隔 >=1s + 0~0.5s 抖动、403/429/5xx 按 5/15/30s 退避重试
-  3 次（规避风控）。爬来的书 `book.json` 顶层带 `source = {site, url, ncode}`
-  （详情页 URL），章节带 `src_ep` 话数编号；正文按 `<p>` 一行一段存为 txt 章节。
+- **爬虫通用约定**：爬虫集中在 `crawlers/` 包。所有请求经 `http.HttpGate` 单一出口：
+  实例级锁串行、相邻请求间隔 >=1s + 0~0.5s 抖动、403/429/5xx 按 5/15/30s 退避重试
+  3 次（规避风控）；每个站点模块各持有一个 HttpGate 实例。抓取任务生命周期统一由
+  `tasks.CrawlRunner` 管理：站点模块注入 `source_key`/`fetch_info`/`fetch_chapter` 回调，
   抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
-- **kakuyomu 爬虫**：`kakuyomu.py` 抓 kakuyomu.jp，风控约定同 syosetu（请求统一经
-  `_request` 出口）。搜索与目录走官方前端同用的 GraphQL 接口（`POST /graphql`）：
-  搜索 `searchWorks` 支持 `GENRES` 多选过滤（14 个ジャンル），目录 `tableOfContents`
-  一次返回全部话数（含分章作品，拍平为单一章节流）；章节正文解析 HTML 页
-  `.widget-episodeBody`（`<p>` 一段一行，去 ruby 注音，标题取 `p.widget-episodeTitle`）。
-  书的 `source = {site, url, work_id}`，章节 `src_ep` 存 episode ID 字符串（非数字序号）。
+- **syosetu 爬虫**：`crawlers/syosetu.py` 抓 syosetu.com。爬来的书 `book.json` 顶层带
+  `source = {site, url, ncode}`（详情页 URL），章节带 `src_ep` 话数编号；正文按
+  `<p>` 一行一段存为 txt 章节。
+- **kakuyomu 爬虫**：`crawlers/kakuyomu.py` 抓 kakuyomu.jp。搜索与目录走官方前端同用的
+  GraphQL 接口（`POST /graphql`）：搜索 `searchWorks` 支持 `GENRES` 多选过滤
+  （14 个ジャンル），目录 `tableOfContents` 一次返回全部话数（含分章作品，拍平为单一
+  章节流）；章节正文解析 HTML 页 `.widget-episodeBody`（`<p>` 一段一行，去 ruby 注音，
+  标题取 `p.widget-episodeTitle`）。书的 `source = {site, url, work_id}`，章节
+  `src_ep` 存 episode ID 字符串（非数字序号）。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，
   写操作 405），与 API 同端口 8300，`config.webdav_enabled` 开关（默认关），未开启时 404。
   只列出有译文的书籍（`list_books` 中 done>0），文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
