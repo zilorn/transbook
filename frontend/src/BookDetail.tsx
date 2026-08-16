@@ -48,6 +48,24 @@ export default function BookDetail() {
   const [preview, setPreview] = createSignal<PreviewState | null>(null)
   const [appendPrev, setAppendPrev] = createSignal<AppendPreview | null>(null)
   const [chapterQuery, setChapterQuery] = createSignal('')
+  // 状态筛选：空集合 = 不过滤；点击表头"状态"展开勾选
+  const [statusFilter, setStatusFilter] = createSignal<Set<string>>(new Set<string>())
+  const [statusMenuOpen, setStatusMenuOpen] = createSignal(false)
+  const [statusMenuPos, setStatusMenuPos] = createSignal({ top: 0, left: 0 })
+  let statusMenuRef: HTMLDivElement | undefined
+  const toggleStatusFilter = (s: string) => {
+    const next = new Set(statusFilter())
+    if (next.has(s)) next.delete(s); else next.add(s)
+    setStatusFilter(next)
+  }
+  const toggleStatusMenu = (e: MouseEvent) => {
+    if (!statusMenuOpen()) {
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      setStatusMenuPos({ top: r.bottom + 4, left: r.left })
+    }
+    setStatusMenuOpen(v => !v)
+  }
+  const statusCount = (s: string) => (book()?.chapters || []).filter(c => c.status === s).length
 
   // ---- 目录表格列宽：# / 标题 / 操作列可拖拽调整，状态列固定不可调 ----
   const STATUS_COL_W = 96
@@ -73,7 +91,7 @@ export default function BookDetail() {
       onPointerDown={(e) => startColResize(e, key, min)} />
   )
 
-  // 章节搜索：按原标题/译后标题过滤（不区分大小写），保留原序号
+  // 章节搜索：按原标题/译后标题过滤（不区分大小写），保留原序号；再按状态筛选
   const filteredChapters = () =>
     (book()?.chapters || [])
       .map((c, i) => ({ c, n: i + 1 }))
@@ -82,6 +100,7 @@ export default function BookDetail() {
         if (!q) return true
         return c.title.toLowerCase().includes(q) || (c.title_translated || '').toLowerCase().includes(q)
       })
+      .filter(({ c }) => statusFilter().size === 0 || statusFilter().has(c.status))
 
   // ---- 章节内容预览（原文/译文）----
   const openPreview = async (c: Chapter, translated: boolean) => {
@@ -109,14 +128,21 @@ export default function BookDetail() {
   }
 
   let timer: ReturnType<typeof setInterval>
+  const onDocPointerDown = (e: PointerEvent) => {
+    if (statusMenuRef && !statusMenuRef.contains(e.target as Node)) setStatusMenuOpen(false)
+  }
   onMount(() => {
     refresh()
+    document.addEventListener('pointerdown', onDocPointerDown)
     timer = setInterval(() => {
       const b = book()
       if (b && (b.running || b.status === 'translating' || b.status === 'glossary')) refresh()
     }, 2000)
   })
-  onCleanup(() => clearInterval(timer))
+  onCleanup(() => {
+    clearInterval(timer)
+    document.removeEventListener('pointerdown', onDocPointerDown)
+  })
 
   const act = async (fn: () => Promise<unknown>, okMsg = '') => {
     setBusy(true)
@@ -320,11 +346,13 @@ export default function BookDetail() {
               <input class="w-[280px] px-2.5 py-[7px] border border-line rounded-[6px] text-[14px]"
                 placeholder="搜索章节（原标题 / 译后标题）"
                 value={chapterQuery()} onInput={(e) => setChapterQuery(e.currentTarget.value)} />
-              <Show when={chapterQuery().trim()}>
+              <Show when={chapterQuery().trim() || statusFilter().size > 0}>
                 <span class="text-muted text-[13px]">
                   匹配 {filteredChapters().length} / {b().chapters.length} 章
                 </span>
-                <button class="small" onClick={() => setChapterQuery('')}>清除</button>
+                <button class="small" onClick={() => { setChapterQuery(''); setStatusFilter(new Set<string>()) }}>
+                  清除
+                </button>
               </Show>
             </div>
             <div class="overflow-x-auto">
@@ -342,7 +370,42 @@ export default function BookDetail() {
                   <tr>
                     <th class="relative">#{colResizer('idx', 40)}</th>
                     <th class="relative">标题（译名 / 原名）{colResizer('title', 160)}</th>
-                    <th class="whitespace-nowrap">状态</th>
+                    <th class="whitespace-nowrap">
+                      <div ref={statusMenuRef} class="inline-block">
+                        <button type="button"
+                          class={`border-0 bg-transparent p-0 font-bold cursor-pointer inline-flex items-center gap-[3px] ${statusFilter().size > 0 ? 'text-primary' : 'text-inherit'}`}
+                          title="按状态筛选"
+                          onClick={toggleStatusMenu}>
+                          状态
+                          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"
+                            class={`transition-transform ${statusMenuOpen() ? 'rotate-180' : ''}`}>
+                            <path d="M12 16l-6-6h12z" />
+                          </svg>
+                        </button>
+                        <Show when={statusMenuOpen()}>
+                          {/* fixed 定位，避免被 overflow-x-auto 的表格外层裁剪 */}
+                          <div class="fixed z-20 bg-card border border-line rounded-[6px] shadow-lg py-1 min-w-[130px] font-normal text-left"
+                            style={{ top: `${statusMenuPos().top}px`, left: `${statusMenuPos().left}px` }}>
+                            <For each={['pending', 'translating', 'done']}>
+                              {(s) => (
+                                <label class="flex items-center gap-2 px-3 py-[6px] cursor-pointer text-[13px] hover:bg-[#f3f4f6]">
+                                  <input type="checkbox" checked={statusFilter().has(s)}
+                                    onChange={() => toggleStatusFilter(s)} />
+                                  {CH_STATUS[s]}（{statusCount(s)}）
+                                </label>
+                              )}
+                            </For>
+                            <Show when={statusFilter().size > 0}>
+                              <button type="button"
+                                class="border-0 bg-transparent w-full text-left px-3 py-[6px] text-[13px] text-muted hover:bg-[#f3f4f6] cursor-pointer"
+                                onClick={() => setStatusFilter(new Set<string>())}>
+                                清除筛选
+                              </button>
+                            </Show>
+                          </div>
+                        </Show>
+                      </div>
+                    </th>
                     <th class="relative">{colResizer('ops', 72)}</th>
                   </tr>
                 </thead>
