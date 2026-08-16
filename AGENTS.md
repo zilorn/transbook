@@ -28,7 +28,7 @@ backend/
 frontend/
   src/index.tsx  App.tsx（HashRouter + 侧边栏布局）  state.ts（全局 config/设置弹窗信号）
   BookList.tsx  BookDetail.tsx  TranslatePage.tsx  SearchPage.tsx  Settings.tsx  api.ts  types.ts
-  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列、/syosetu 小说搜索（爬虫）；用 HashRouter
+  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列、/search 小说搜索（爬虫）；用 HashRouter
   是因后端 StaticFiles 无 SPA 回退，history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
 ```
 
