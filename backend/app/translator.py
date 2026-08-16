@@ -312,7 +312,7 @@ async def _translate_chapter(client, cfg, pool: KeyPool, stop, book: dict, ch: d
     async with pool.slot() as k:
         raw_title = await chat(client, cfg, _title_messages([ch["title"]], glossary, target_lang), key=k)
     parsed = _parse_segment(raw_title, 1)
-    ch["title_translated"] = (parsed[0] or raw_title).strip().strip("【1】").strip() or ch["title"]
+    ch["title_translated"] = (parsed[0] or raw_title).strip().removeprefix("【1】").strip() or ch["title"]
     ch["seg_done"] = 1
     store.save_book(book)
 
@@ -372,7 +372,7 @@ async def translate_book(book_id: str, chapter_ids: list[str] | None = None,
                         raw = await chat(client, cfg, _title_messages(
                             [book["title"]], book.get("glossary") or [], cfg["target_lang"]), key=k)
                     parsed = _parse_segment(raw, 1)
-                    book["title_translated"] = (parsed[0] or raw).strip().strip("【1】").strip()
+                    book["title_translated"] = (parsed[0] or raw).strip().removeprefix("【1】").strip()
                     store.save_book(book)
                 except Exception:
                     pass
