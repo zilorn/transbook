@@ -74,7 +74,9 @@ def _glossary_messages(sample: str, target_lang: str,
         {"role": "system", "content":
          "你是文学翻译助手。从给定的小说原文中抽取需要统一译法的专有名词：人名、地名、组织名、术语/专有词汇。"
          "只抽取确实需要统一翻译的实体，不要普通词汇。" + existing_note +
-         "严格输出 JSON：{\"terms\": [{\"src\": 原文, \"dst\": 译名, \"type\": \"人名|地名|组织|术语\"}]}。"
+         "严格输出 JSON：{\"terms\": [{\"src\": 原文, \"dst\": 译名, \"type\": \"人名|地名|组织|术语\", \"note\": 备注}]}。"
+         "note 为可选备注，仅在对翻译有帮助时填写（如人名尽量标明性别、身份关系等），"
+         "内容务必简短（不超过 15 字），不需要时输出空字符串。"
          "不要输出任何其他内容。"},
         {"role": "user", "content": f"目标语言：{target_lang}\n\n{existing_lines}原文样本：\n{sample}"},
     ]
@@ -100,7 +102,8 @@ def _translate_messages(text: str, glossary: list[dict], target_lang: str,
                         kind: str = "正文") -> list[dict]:
     gloss = ""
     if glossary:
-        lines = [f"{g['src']} = {g['dst']}" for g in glossary if g.get("src") and g.get("dst")]
+        lines = [f"{g['src']} = {g['dst']}" + (f"（{g['note']}）" if g.get("note") else "")
+                 for g in glossary if g.get("src") and g.get("dst")]
         if lines:
             gloss = "术语表（必须严格遵守）：\n" + "\n".join(lines[:400]) + "\n\n"
     return [
@@ -210,6 +213,8 @@ async def generate_glossary(book_id: str) -> dict:
         if isinstance(terms, dict):
             terms = [{"src": k, "dst": v, "type": "术语"} for k, v in terms.items()]
         terms = [t for t in terms if isinstance(t, dict) and t.get("src")]
+        for t in terms:
+            t["note"] = str(t.get("note") or "").strip()
         book["glossary"] = _merge_glossary(existing, terms)
         book["status"] = "ready"
         book["error"] = None

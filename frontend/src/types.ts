@@ -61,6 +61,7 @@ export interface GlossaryTerm {
   src: string
   dst: string
   type: string
+  note?: string
 }
 
 // GET /api/books/{id} / POST /api/books 的整书结构

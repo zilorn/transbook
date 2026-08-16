@@ -116,7 +116,7 @@ export default function BookDetail() {
     setGlossary(g)
     setGlossaryDirty(true)
   }
-  const addTerm = () => { setGlossary([...glossary(), { src: '', dst: '', type: '术语' }]); setGlossaryDirty(true) }
+  const addTerm = () => { setGlossary([...glossary(), { src: '', dst: '', type: '术语', note: '' }]); setGlossaryDirty(true) }
   const delTerm = (i: number) => { setGlossary(glossary().filter((_, n) => n !== i)); setGlossaryDirty(true) }
   const saveGlossary = () => act(
     () => api.saveGlossary(bookId, glossary()),
@@ -354,7 +354,7 @@ export default function BookDetail() {
             </div>
             <table>
               <thead>
-                <tr><th>原文</th><th>译名</th><th>类型</th><th></th></tr>
+                <tr><th>原文</th><th>译名</th><th>类型</th><th>备注</th><th></th></tr>
               </thead>
               <tbody>
                 <For each={glossary()}>
@@ -370,6 +370,9 @@ export default function BookDetail() {
                           <option>人名</option><option>地名</option><option>组织</option><option>术语</option>
                         </select>
                       </td>
+                      <td><input class="w-full px-2 py-[5px] border border-line rounded-[4px] text-[14px]"
+                        placeholder="可选，如：女，主角的妹妹"
+                        value={t.note || ''} onInput={(e) => setTerm(i(), 'note', e.currentTarget.value)} /></td>
                       <td><button class="danger small" onClick={() => delTerm(i())}>删</button></td>
                     </tr>
                   )}

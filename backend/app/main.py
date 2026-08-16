@@ -295,7 +295,8 @@ def put_glossary(book_id: str, body: GlossaryIn):
         raise HTTPException(404, "书籍不存在")
     terms = [{"src": str(t.get("src", "")).strip(),
               "dst": str(t.get("dst", "")).strip(),
-              "type": str(t.get("type", "术语")).strip() or "术语"}
+              "type": str(t.get("type", "术语")).strip() or "术语",
+              "note": str(t.get("note", "")).strip()}
              for t in body.terms]
     book["glossary"] = [t for t in terms if t["src"]]
     store.save_book(book)
