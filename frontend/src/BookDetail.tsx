@@ -178,6 +178,31 @@ export default function BookDetail() {
 
   const doneCount = () => (book()?.chapters || []).filter(c => c.status === 'done').length
 
+  // ---- 来源站点增量更新（仅抓新章节）----
+  const [updating, setUpdating] = createSignal(false)
+  const updateFromSource = async () => {
+    setUpdating(true)
+    setError('')
+    setMsg('')
+    try {
+      await api.syosetuUpdate(bookId)
+      for (;;) {
+        await new Promise(r => setTimeout(r, 2000))
+        const st = await api.syosetuStatus(bookId)
+        if (!st.running) {
+          if (st.error) setError(`更新失败：${st.error}（已抓部分保留）`)
+          else setMsg(st.added > 0 ? `已新增 ${st.added} 章` : '已是最新，没有新章节')
+          break
+        }
+      }
+      await refresh()
+    } catch (e: any) {
+      setError(String(e.message || e))
+    } finally {
+      setUpdating(false)
+    }
+  }
+
   return (
     <Show when={book()} fallback={<p>加载中…</p>}>
       {(b) => (
@@ -203,6 +228,13 @@ export default function BookDetail() {
               <span class={BADGE}>{b().format}</span>
               <span class={BADGE}>{doneCount()}/{b().chapters.length} 章</span>
               <span class={BADGE}>状态：{b().status}{b().running ? '（运行中）' : ''}</span>
+              <Show when={b().source}>
+                <a class={`${BADGE} no-underline hover:text-primary`}
+                  href={b().source!.url} target="_blank" rel="noreferrer"
+                  title={`作品页：${b().source!.url}`}>
+                  来源：{b().source!.site}.com ↗
+                </a>
+              </Show>
             </div>
             <div class="h-2.5 bg-[#e5e7eb] rounded-[3px] overflow-hidden my-2">
               <div class="h-full bg-primary transition-[width] duration-[0.4s]"
@@ -220,6 +252,13 @@ export default function BookDetail() {
               排队全部重译
             </button>
             <button class="link" onClick={() => navigate('/queue')}>前往翻译队列 →</button>
+            <Show when={b().source}>
+              <button disabled={busy() || b().running || updating()}
+                title="从来源站点检查并抓取最新章节"
+                onClick={updateFromSource}>
+                {updating() ? '正在更新…' : '更新章节'}
+              </button>
+            </Show>
             <button disabled={busy() || b().running}
               onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
               生成术语表

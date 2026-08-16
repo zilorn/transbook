@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import parsing, store, translator, webdav
+from . import parsing, store, syosetu, translator, webdav
 
 app = FastAPI(title="TranLatexBook")
 app.include_router(webdav.router)
@@ -255,6 +255,7 @@ def get_book(book_id: str):
 @app.delete("/api/books/{book_id}")
 def delete_book(book_id: str):
     translator.stop_translation(book_id)
+    syosetu.stop_crawl(book_id)
     store.dequeue_book(book_id)
     store.delete_book(book_id)
     return {"ok": True}
@@ -299,6 +300,77 @@ def put_glossary(book_id: str, body: GlossaryIn):
     book["glossary"] = [t for t in terms if t["src"]]
     store.save_book(book)
     return {"ok": True, "count": len(book["glossary"])}
+
+
+# ---------- syosetu 爬虫 ----------
+
+@app.get("/api/syosetu/search")
+async def syosetu_search(q: str):
+    if not q.strip():
+        return {"results": []}
+    try:
+        return {"results": await syosetu.search(q.strip())}
+    except Exception as e:
+        raise HTTPException(502, f"搜索失败: {e}")
+
+
+class FetchIn(BaseModel):
+    url: str
+
+
+@app.post("/api/syosetu/fetch")
+async def syosetu_fetch(body: FetchIn):
+    """按作品链接/N コード创建书籍并启动后台爬取（逐章落盘）。"""
+    ncode = syosetu.parse_ncode(body.url)
+    if not ncode:
+        raise HTTPException(400, "无法识别 ncode.syosetu.com 作品链接或 N コード")
+    book_id = store.new_book_id()
+    store.book_dir(book_id)
+    book = {
+        "id": book_id,
+        "title": ncode,  # 书名在爬取到目录后回填
+        "title_translated": None,
+        "author": "",
+        "format": "txt",
+        "source_file": "",
+        "created_at": store.now(),
+        "status": "ready",
+        "error": None,
+        "glossary": [],
+        "chapters": [],
+        "source": {"site": "syosetu",
+                   "url": f"https://ncode.syosetu.com/{ncode}/",
+                   "ncode": ncode},
+    }
+    store.save_book(book)
+    syosetu.start_crawl(book_id)
+    return book
+
+
+@app.get("/api/syosetu/status/{book_id}")
+def syosetu_status(book_id: str):
+    return syosetu.progress(book_id)
+
+
+@app.post("/api/syosetu/stop/{book_id}")
+async def syosetu_stop(book_id: str):
+    syosetu.stop_crawl(book_id)
+    return {"ok": True}
+
+
+@app.post("/api/books/{book_id}/syosetu/update")
+async def syosetu_update(book_id: str):
+    """增量更新：只抓本地缺失的最新章节。"""
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    if not book.get("source"):
+        raise HTTPException(400, "该书没有网络来源，无法更新")
+    if translator.is_running(book_id):
+        raise HTTPException(409, "翻译进行中，请先停止再更新章节")
+    if not syosetu.start_update(book_id):
+        raise HTTPException(409, "该书已有爬取任务在运行")
+    return {"ok": True}
 
 
 # ---------- 翻译控制 ----------

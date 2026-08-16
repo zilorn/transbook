@@ -115,7 +115,7 @@ def _translate_messages(text: str, glossary: list[dict], target_lang: str,
 def _title_messages(titles: list[str], glossary: list[dict], target_lang: str) -> list[dict]:
     joined = "\n".join(f"【{i + 1}】{t}" for i, t in enumerate(titles))
     msgs = _translate_messages(joined, glossary, target_lang, kind="标题")
-    msgs[0]["content"] += " 标题应简洁，不要翻译编号标记本身。"
+    msgs[0]["content"] += " 标题应简洁，不要翻译编号标记本身。但格式要一一对应。"
     return msgs
 
 

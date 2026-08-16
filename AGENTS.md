@@ -22,13 +22,14 @@ backend/
     parsing.py     # txt 正则分章、epub 解析/生成、HTML 翻译单元抽取
     deepseek.py    # DeepSeek API 客户端（chat 支持按 KeyPool 条目调用）
     translator.py  # 术语表生成 + KeyPool 多 key 并发翻译流水线 + 队列执行器（asyncio）
+    syosetu.py     # syosetu.com 爬虫：搜索/目录正文抓取/增量更新（串行限速，逐章落盘）
     webdav.py      # 只读 WebDAV（/webdav/）：有译文的书打包 EPUB 暴露给阅读软件
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
   src/index.tsx  App.tsx（HashRouter + 侧边栏布局）  state.ts（全局 config/设置弹窗信号）
-  BookList.tsx  BookDetail.tsx  TranslatePage.tsx  Settings.tsx  api.ts  types.ts
-  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列；用 HashRouter 是因后端
-  StaticFiles 无 SPA 回退，history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
+  BookList.tsx  BookDetail.tsx  TranslatePage.tsx  SearchPage.tsx  Settings.tsx  api.ts  types.ts
+  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列、/syosetu 小说搜索（爬虫）；用 HashRouter
+  是因后端 StaticFiles 无 SPA 回退，history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
 ```
 
 ## 常用命令
@@ -81,6 +82,11 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   用 BeautifulSoup 抽取 body 内容重建干净文档（带 xml 声明的完整文档会让 ebooklib 崩溃）。
 - **FastAPI 路由**：调用 `asyncio.create_task` 的接口必须是 `async def`
   （同步 def 会跑在线程池，没有 running event loop）。
+- **syosetu 爬虫**：`syosetu.py` 抓 syosetu.com。所有请求经 `_get` 单一出口：
+  模块级锁串行、相邻请求间隔 >=1s + 0~0.5s 抖动、403/429/5xx 按 5/15/30s 退避重试
+  3 次（规避风控）。爬来的书 `book.json` 顶层带 `source = {site, url, ncode}`
+  （详情页 URL），章节带 `src_ep` 话数编号；正文按 `<p>` 一行一段存为 txt 章节。
+  抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，
   写操作 405），与 API 同端口 8300，`config.webdav_enabled` 开关（默认关），未开启时 404。
   只列出有译文的书籍（`list_books` 中 done>0），文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
@@ -98,6 +104,10 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - `POST /api/books/{id}/chapters` — 追加章节（JSON: `{chapters: [{title, body, format}]}`，
   粘贴文本走单章；文件追加由 preview 勾选后回传）
 - `POST /api/books/{id}/glossary/generate` / `PUT /api/books/{id}/glossary` — 生成 / 保存术语表
+- `GET /api/syosetu/search?q=` — 搜索 syosetu.com 作品
+- `POST /api/syosetu/fetch` — 按作品链接/N コード建书并后台爬取（逐章落盘）
+- `GET /api/syosetu/status/{book_id}` / `POST /api/syosetu/stop/{book_id}` — 爬取进度 / 停止
+- `POST /api/books/{id}/syosetu/update` — 增量更新，只抓最新章节
 - `POST /api/books/{id}/translate`（body: `{chapter_ids?, overwrite?}`）/ `POST .../stop`
 - `GET/POST /api/queue`、`DELETE /api/queue/{book_id}` — 翻译队列查看/入队（同书替换）/移除
 - `POST /api/queue/start` / `POST /api/queue/stop` — 一键开始 / 停止队列（逐本顺序执行）

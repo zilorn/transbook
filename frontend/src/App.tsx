@@ -4,6 +4,7 @@ import { config, loadConfig, setSettingsOpen, settingsOpen } from './state'
 import BookList from './BookList'
 import BookDetail from './BookDetail'
 import TranslatePage from './TranslatePage'
+import SearchPage from './SearchPage'
 import Settings from './Settings'
 
 const NAV = 'block px-3 py-2 rounded-[6px] text-[14px] no-underline'
@@ -23,6 +24,7 @@ function Layout(props: ParentProps) {
         </div>
         <nav class="flex-1 p-3 flex flex-col gap-1">
           <A href="/" end class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}>书库</A>
+          <A href="/syosetu" class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}>小说搜索</A>
           <A href="/queue" class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}>翻译队列</A>
         </nav>
         <div class="p-3 border-t border-line flex flex-col gap-2 items-start">
@@ -53,6 +55,7 @@ export default function App() {
       <Route path="/" component={BookList} />
       <Route path="/books/:id" component={BookDetail} />
       <Route path="/queue" component={TranslatePage} />
+      <Route path="/syosetu" component={SearchPage} />
     </HashRouter>
   )
 }

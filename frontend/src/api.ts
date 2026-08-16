@@ -3,9 +3,11 @@ import type {
   BookSummary,
   ChapterPreviewResult,
   Config,
+  CrawlStatus,
   GlossaryTerm,
   NewChapter,
   QueueStatus,
+  SyosetuResult,
   TranslateOptions,
 } from './types'
 
@@ -95,5 +97,18 @@ export const api = {
     req(`/api/books/${id}/toc/retranslate`, { method: 'POST' }),
   chapterContent: (id: string, cid: string, translated = false): Promise<string> =>
     reqText(`/api/books/${id}/chapters/${cid}/content${translated ? '?translated=true' : ''}`),
+  syosetuSearch: (q: string): Promise<{ results: SyosetuResult[] }> =>
+    req(`/api/syosetu/search?q=${encodeURIComponent(q)}`),
+  syosetuFetch: (url: string): Promise<Book> =>
+    req('/api/syosetu/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    }),
+  syosetuStatus: (id: string): Promise<CrawlStatus> => req(`/api/syosetu/status/${id}`),
+  syosetuStop: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/syosetu/stop/${id}`, { method: 'POST' }),
+  syosetuUpdate: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/books/${id}/syosetu/update`, { method: 'POST' }),
   exportUrl: (id: string, fmt: string): string => `/api/books/${id}/export?fmt=${fmt}`,
 }

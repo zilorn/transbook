@@ -21,6 +21,13 @@ export interface Config {
 
 export type BookStatus = 'ready' | 'glossary' | 'translating' | 'paused' | 'done' | 'error'
 
+// 书籍网络来源（目前仅 syosetu）；上传的书没有该字段
+export interface BookSource {
+  site: string
+  url: string
+  ncode: string
+}
+
 // GET /api/books 的列表条目
 export interface BookSummary {
   id: string
@@ -33,6 +40,7 @@ export interface BookSummary {
   chapters: number
   done: number
   glossary_count: number
+  source?: BookSource | null
 }
 
 export type ChapterStatus = 'pending' | 'translating' | 'done' | 'error'
@@ -69,6 +77,7 @@ export interface Book {
   running: boolean
   glossary: GlossaryTerm[]
   chapters: Chapter[]
+  source?: BookSource | null
 }
 
 // 追加章节时提交的条目
@@ -110,4 +119,25 @@ export interface QueueStatusEntry {
 export interface QueueStatus {
   running: boolean
   entries: QueueStatusEntry[]
+}
+
+// GET /api/syosetu/search 的单条结果
+export interface SyosetuResult {
+  ncode: string
+  url: string
+  title: string
+  author: string
+  synopsis: string
+  status: string
+  episodes: number
+}
+
+// GET /api/syosetu/status/{book_id} 的爬取进度
+export interface CrawlStatus {
+  running: boolean
+  total: number
+  done: number
+  added: number
+  current: string
+  error: string | null
 }
