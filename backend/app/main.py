@@ -317,6 +317,22 @@ async def syosetu_search(q: str):
         raise HTTPException(502, f"搜索失败: {e}")
 
 
+@app.get("/api/syosetu/rankings")
+async def syosetu_rankings(period: str = "daily", genre: str = "total",
+                           kind: str = "total"):
+    """排行榜（发现页）：周期 × 分类，综合榜可按范围（连载/完结/短篇）筛选。"""
+    if period not in syosetu.RANK_PERIODS or genre not in syosetu.RANK_GENRES \
+            or kind not in syosetu.RANK_KINDS:
+        raise HTTPException(400, "无效的排行榜筛选参数")
+    try:
+        return {"results": await syosetu.rankings(period, genre, kind),
+                "periods": syosetu.RANK_PERIODS,
+                "genres": syosetu.RANK_GENRES,
+                "kinds": syosetu.RANK_KINDS}
+    except Exception as e:
+        raise HTTPException(502, f"排行榜获取失败: {e}")
+
+
 class FetchIn(BaseModel):
     url: str
 
@@ -326,7 +342,7 @@ async def syosetu_fetch(body: FetchIn):
     """按作品链接/N コード创建书籍并启动后台爬取（逐章落盘）。"""
     ncode = syosetu.parse_ncode(body.url)
     if not ncode:
-        raise HTTPException(400, "无法识别 ncode.syosetu.com 作品链接或 N コード")
+        raise HTTPException(400, "无法识别 ncode.syosetu.com 作品链接或作品编号")
     book_id = store.new_book_id()
     store.book_dir(book_id)
     book = {
@@ -392,6 +408,22 @@ async def kakuyomu_search(q: str, genre: list[str] = Query(default=[])):
 @app.get("/api/kakuyomu/genres")
 def kakuyomu_genres():
     return {"genres": kakuyomu.GENRES}
+
+
+@app.get("/api/kakuyomu/rankings")
+async def kakuyomu_rankings(genre: str = "all", period: str = "weekly",
+                            variation: str = "all"):
+    """排行榜（发现页）：类型 × 周期 × 篇幅。"""
+    if genre not in kakuyomu.RANK_GENRES or period not in kakuyomu.RANK_PERIODS \
+            or variation not in kakuyomu.RANK_VARIATIONS:
+        raise HTTPException(400, "无效的排行榜筛选参数")
+    try:
+        return {"results": await kakuyomu.rankings(genre, period, variation),
+                "genres": kakuyomu.RANK_GENRES,
+                "periods": kakuyomu.RANK_PERIODS,
+                "variations": kakuyomu.RANK_VARIATIONS}
+    except Exception as e:
+        raise HTTPException(502, f"排行榜获取失败: {e}")
 
 
 @app.post("/api/kakuyomu/fetch")

@@ -25,15 +25,17 @@ backend/
     crawlers/      # 站点爬虫包（main.py 经 `from .crawlers import syosetu, kakuyomu` 使用）
       http.py      # 共享限速 HTTP 出口 HttpGate（串行 + 抖动 + 风控退避），每站点一个实例
       tasks.py     # 共享抓取任务管理 CrawlRunner（整书抓取/增量更新/进度/停止/逐章落盘）
-      syosetu.py   # syosetu.com：搜索/目录/正文解析（站点专属逻辑）
-      kakuyomu.py  # kakuyomu.jp：GraphQL 搜索/目录 + HTML 正文解析（站点专属逻辑）
+      syosetu.py   # syosetu.com：搜索/排行榜/目录/正文解析（站点专属逻辑）
+      kakuyomu.py  # kakuyomu.jp：GraphQL 搜索/目录 + __NEXT_DATA__ 排行榜 + HTML 正文解析（站点专属逻辑）
     webdav.py      # 只读 WebDAV（/webdav/）：有译文的书打包 EPUB 暴露给阅读软件
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
   src/index.tsx  App.tsx（HashRouter + 侧边栏布局）  state.ts（全局 config/设置弹窗信号）
-  BookList.tsx  BookDetail.tsx  TranslatePage.tsx  SearchPage.tsx  Settings.tsx  api.ts  types.ts
-  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列、/search 小说搜索（爬虫）；用 HashRouter
-  是因后端 StaticFiles 无 SPA 回退，history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
+  BookList.tsx  BookDetail.tsx  TranslatePage.tsx  SearchPage.tsx  DiscoverPage.tsx  Settings.tsx
+  CrawlJobs.tsx（搜索页/发现页共用的爬取任务列表 + 2s 轮询）  api.ts  types.ts
+  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列、/search 小说搜索（爬虫）、/discover 发现
+  （排行榜）；用 HashRouter 是因后端 StaticFiles 无 SPA 回退，history 模式刷新深链接会 404。
+  页面间跳转一律 useNavigate。
 ```
 
 ## 常用命令
@@ -95,13 +97,21 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
 - **syosetu 爬虫**：`crawlers/syosetu.py` 抓 syosetu.com。爬来的书 `book.json` 顶层带
   `source = {site, url, ncode}`（详情页 URL），章节带 `src_ep` 话数编号；正文按
-  `<p>` 一行一段存为 txt 章节。
+  `<p>` 一行一段存为 txt 章节。排行榜（发现页）：`rankings(period, genre, kind)` 解析
+  `/rank/list/type/{period}_{kind}/`（综合榜，kind=全部/连载/完结/短篇）与
+  `/rank/genrelist/type/{period}_{genre}/`（分类榜），每榜 50 条；
+  `RANK_PERIODS`/`RANK_GENRES`/`RANK_KINDS` 为合法参数及中文显示名。
 - **kakuyomu 爬虫**：`crawlers/kakuyomu.py` 抓 kakuyomu.jp。搜索与目录走官方前端同用的
   GraphQL 接口（`POST /graphql`）：搜索 `searchWorks` 支持 `GENRES` 多选过滤
-  （14 个ジャンル），目录 `tableOfContents` 一次返回全部话数（含分章作品，拍平为单一
-  章节流）；章节正文解析 HTML 页 `.widget-episodeBody`（`<p>` 一段一行，去 ruby 注音，
-  标题取 `p.widget-episodeTitle`）。书的 `source = {site, url, work_id}`，章节
-  `src_ep` 存 episode ID 字符串（非数字序号）。
+  （14 个类型，值为中文显示名），目录 `tableOfContents` 一次返回全部话数（含分章作品，
+  拍平为单一章节流）；章节正文解析 HTML 页 `.widget-episodeBody`（`<p>` 一段一行，
+  去 ruby 注音，标题取 `p.widget-episodeTitle`）。书的 `source = {site, url, work_id}`，
+  章节 `src_ep` 存 episode ID 字符串（非数字序号）。排行榜（发现页）：
+  `rankings(genre, period, variation)` 抓 `/rankings/{genre}/{period}?work_variation=`，
+  页面类名为构建期哈希，数据解析自 `__NEXT_DATA__` 内嵌 JSON 的 `__APOLLO_STATE__`
+  （ROOT_QUERY 的 `rankedWorks(...)` 键 → Work/UserAccount 归一化实体），每榜 100 条。
+- **界面中文化**：搜索/排行榜返回的 `status`（已完结/连载中/短篇）、`genre`、筛选项
+  显示名一律后端出中文（`syosetu._GENRE_TEXT_ZH`、`kakuyomu.GENRES` 值），前端不做映射。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，
   写操作 405），与 API 同端口 8300，`config.webdav_enabled` 开关（默认关），未开启时 404。
   只列出有译文的书籍（`list_books` 中 done>0），文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
@@ -120,10 +130,12 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   粘贴文本走单章；文件追加由 preview 勾选后回传）
 - `POST /api/books/{id}/glossary/generate` / `PUT /api/books/{id}/glossary` — 生成 / 保存术语表
 - `GET /api/syosetu/search?q=` — 搜索 syosetu.com 作品
-- `POST /api/syosetu/fetch` — 按作品链接/N コード建书并后台爬取（逐章落盘）
+- `GET /api/syosetu/rankings?period=&genre=&kind=` — 排行榜（发现页；响应附带 periods/genres/kinds 筛选项）
+- `POST /api/syosetu/fetch` — 按作品链接/作品编号建书并后台爬取（逐章落盘）
 - `GET /api/syosetu/status/{book_id}` / `POST /api/syosetu/stop/{book_id}` — 爬取进度 / 停止
 - `POST /api/books/{id}/syosetu/update` — 增量更新，只抓最新章节
 - `GET /api/kakuyomu/search?q=&genre=`（genre 可重复多选）/ `GET /api/kakuyomu/genres`
+- `GET /api/kakuyomu/rankings?genre=&period=&variation=` — 排行榜（发现页；响应附带筛选项）
 - `POST /api/kakuyomu/fetch` — 按作品/章节链接或作品 ID 建书并后台爬取（逐章落盘）
 - `GET /api/kakuyomu/status/{book_id}` / `POST /api/kakuyomu/stop/{book_id}` — 爬取进度 / 停止
 - `POST /api/books/{id}/kakuyomu/update` — 增量更新，只抓最新章节

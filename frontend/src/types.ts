@@ -155,3 +155,35 @@ export interface CrawlStatus {
   current: string
   error: string | null
 }
+
+// GET /api/{syosetu,kakuyomu}/rankings 的单条条目（发现页）
+export interface RankItem {
+  rank: number
+  url: string
+  title: string
+  author: string
+  synopsis: string
+  status: string
+  genre: string
+  points: number
+  chars: number
+  episodes: number
+  ncode?: string
+  work_id?: string
+}
+
+// GET /api/syosetu/rankings 的响应
+export interface SyosetuRankingsResult {
+  results: RankItem[]
+  periods: Record<string, string>
+  genres: Record<string, string>
+  kinds: Record<string, string>
+}
+
+// GET /api/kakuyomu/rankings 的响应
+export interface KakuyomuRankingsResult {
+  results: RankItem[]
+  periods: Record<string, string>
+  genres: Record<string, string>
+  variations: Record<string, string>
+}

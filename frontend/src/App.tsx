@@ -5,6 +5,7 @@ import BookList from './BookList'
 import BookDetail from './BookDetail'
 import TranslatePage from './TranslatePage'
 import SearchPage from './SearchPage'
+import DiscoverPage from './DiscoverPage'
 import Settings from './Settings'
 
 const NAV = 'flex items-center gap-2 px-3 py-2 rounded-[6px] text-[14px] no-underline'
@@ -43,6 +44,15 @@ function IconList() {
   )
 }
 
+function IconCompass() {
+  return (
+    <svg class={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
+    </svg>
+  )
+}
+
 function IconSettings() {
   return (
     <svg class={ICON} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -67,6 +77,7 @@ function Layout(props: ParentProps) {
         <nav class="flex-1 p-3 flex flex-col gap-1">
           <A href="/" end class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}><IconBook />书库</A>
           <A href="/search" class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}><IconSearch />小说搜索</A>
+          <A href="/discover" class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}><IconCompass />发现</A>
           <A href="/queue" class={`${NAV} ${NAV_IDLE}`} activeClass={NAV_ACTIVE}><IconList />翻译队列</A>
         </nav>
         <div class="p-3 border-t border-line flex flex-col gap-2 items-start">
@@ -98,6 +109,7 @@ export default function App() {
       <Route path="/books/:id" component={BookDetail} />
       <Route path="/queue" component={TranslatePage} />
       <Route path="/search" component={SearchPage} />
+      <Route path="/discover" component={DiscoverPage} />
     </HashRouter>
   )
 }

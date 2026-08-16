@@ -1,8 +1,8 @@
 """syosetu.com（成为小说家吧）爬虫：搜索、目录/正文抓取、增量更新。
 
-站点专属逻辑：关键词搜索（yomou）、详情页目录解析（自动翻页）、单话正文解析
-（<p> 一段一行，去 ruby 注音）。限速请求走 http.HttpGate，抓取任务生命周期
-（进度/停止/逐章落盘）走 tasks.CrawlRunner。
+站点专属逻辑：关键词搜索（yomou）、排行榜（rank/list 综合榜 + rank/genrelist 分类榜）、
+详情页目录解析（自动翻页）、单话正文解析（<p> 一段一行，去 ruby 注音）。限速请求走
+http.HttpGate，抓取任务生命周期（进度/停止/逐章落盘）走 tasks.CrawlRunner。
 """
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ async def search(query: str) -> list[dict]:
             "title": a.get_text(strip=True),
             "author": author_a.get_text(strip=True) if author_a else "",
             "synopsis": ex.get_text(" ", strip=True) if ex else "",
-            "status": "完結" if "完結" in left_text else ("連載中" if "連載" in left_text else ""),
+            "status": "已完结" if "完結" in left_text else ("连载中" if "連載" in left_text else ""),
             "episodes": int(m.group(1)) if m else 0,
         })
     return out
@@ -124,6 +124,137 @@ async def fetch_chapter(ncode: str, ep: int, short: bool = False) -> tuple[str, 
     if not body:
         raise SyosetuError(f"第 {ep} 话正文为空")
     return title, body
+
+
+# ---------------- 排行榜（发现页） ----------------
+
+# 排行周期（URL 第一段）
+RANK_PERIODS = {
+    "daily": "日排行",
+    "weekly": "周排行",
+    "monthly": "月排行",
+    "quarter": "季度排行",
+    "yearly": "年排行",
+    "total": "累计排行",
+}
+
+# 作品分类（URL 第二段数字编号；total 走综合榜）
+RANK_GENRES = {
+    "total": "综合",
+    "101": "异世界（恋爱）",
+    "102": "现实世界（恋爱）",
+    "201": "高幻想（奇幻）",
+    "202": "低幻想（奇幻）",
+    "301": "纯文学（文艺）",
+    "302": "人性剧情（文艺）",
+    "303": "历史（文艺）",
+    "304": "推理（文艺）",
+    "305": "恐怖（文艺）",
+    "306": "动作（文艺）",
+    "307": "喜剧（文艺）",
+    "401": "VR游戏（科幻）",
+    "402": "宇宙（科幻）",
+    "403": "空想科学（科幻）",
+    "404": "惊悚（科幻）",
+    "9901": "童话（其他）",
+    "9902": "诗歌（其他）",
+    "9903": "随笔（其他）",
+    "9999": "其他（其他）",
+}
+
+# 综合榜（genre=total）下的范围筛选
+RANK_KINDS = {
+    "total": "全部",
+    "r": "连载中",
+    "er": "已完结",
+    "t": "短篇",
+}
+
+# 条目信息里的日文分类文本 → 中文
+_GENRE_TEXT_ZH = {
+    "異世界〔恋愛〕": "异世界（恋爱）",
+    "現実世界〔恋愛〕": "现实世界（恋爱）",
+    "ハイファンタジー〔ファンタジー〕": "高幻想（奇幻）",
+    "ローファンタジー〔ファンタジー〕": "低幻想（奇幻）",
+    "純文学〔文芸〕": "纯文学（文艺）",
+    "ヒューマンドラマ〔文芸〕": "人性剧情（文艺）",
+    "歴史〔文芸〕": "历史（文艺）",
+    "推理〔文芸〕": "推理（文艺）",
+    "ホラー〔文芸〕": "恐怖（文艺）",
+    "アクション〔文芸〕": "动作（文艺）",
+    "コメディー〔文芸〕": "喜剧（文艺）",
+    "VRゲーム〔SF〕": "VR游戏（科幻）",
+    "宇宙〔SF〕": "宇宙（科幻）",
+    "空想科学〔SF〕": "空想科学（科幻）",
+    "パニック〔SF〕": "惊悚（科幻）",
+    "童話〔その他〕": "童话（其他）",
+    "詩〔その他〕": "诗歌（其他）",
+    "エッセイ〔その他〕": "随笔（其他）",
+    "その他〔その他〕": "其他（其他）",
+}
+
+_STATUS_ZH = {"短編": "短篇", "完結": "已完结", "完結済": "已完结", "連載中": "连载中"}
+
+
+async def rankings(period: str = "daily", genre: str = "total",
+                   kind: str = "total") -> list[dict]:
+    """抓取排行榜，返回
+    [{rank, ncode, url, title, author, synopsis, status, episodes, genre, points, chars}]。
+
+    genre=total 走综合榜 /rank/list/type/{period}_{kind}/（kind 筛选范围），
+    其余走分类榜 /rank/genrelist/type/{period}_{genre}/。
+    """
+    if period not in RANK_PERIODS or genre not in RANK_GENRES or kind not in RANK_KINDS:
+        raise SyosetuError("无效的排行榜筛选参数")
+    if genre == "total":
+        url = f"https://yomou.syosetu.com/rank/list/type/{period}_{kind}/"
+    else:
+        url = f"https://yomou.syosetu.com/rank/genrelist/type/{period}_{genre}/"
+    soup = BeautifulSoup(await _gate.get(url), "html.parser")
+    out = []
+    for item in soup.select(".p-ranklist-item"):
+        a = item.select_one(".p-ranklist-item__title a[href]")
+        ncode = parse_ncode(a.get("href", "")) if a else None
+        if not a or not ncode:
+            continue
+        rank_el = item.select_one(".c-rank-place__num")
+        author_el = item.select_one(".p-ranklist-item__author a")
+        points_el = item.select_one(".p-ranklist-item__points")
+        syn_el = item.select_one(".p-ranklist-item__synopsis")
+        # 信息行：连载状态（可带「全Nエピソード」后缀）、字数、分类、更新日期等分隔块
+        seps = [s.get_text(strip=True)
+                for s in item.select(".p-ranklist-item__infomation .p-ranklist-item__separator")]
+        status = ""
+        episodes = 0
+        gtext = ""
+        chars = 0
+        for t in seps:
+            m = re.match(r"(短編|完結済?|連載中)(?:\(全([\d,]+)エピソード\))?$", t)
+            if m:
+                status = _STATUS_ZH[m.group(1)]
+                episodes = int(m.group(2).replace(",", "")) if m.group(2) else 0
+                continue
+            if t in _GENRE_TEXT_ZH:
+                gtext = t
+                continue
+            m = re.match(r"([\d,]+)文字", t)
+            if m:
+                chars = int(m.group(1).replace(",", ""))
+        m = re.search(r"[\d,]+", points_el.get_text(strip=True) if points_el else "")
+        out.append({
+            "rank": int(rank_el.get_text(strip=True)) if rank_el else len(out) + 1,
+            "ncode": ncode,
+            "url": f"https://ncode.syosetu.com/{ncode}/",
+            "title": a.get_text(strip=True),
+            "author": author_el.get_text(strip=True) if author_el else "",
+            "synopsis": syn_el.get_text(" ", strip=True) if syn_el else "",
+            "status": status,
+            "genre": _GENRE_TEXT_ZH.get(gtext, gtext),
+            "points": int(m.group(0).replace(",", "")) if m else 0,
+            "chars": chars,
+            "episodes": episodes,
+        })
+    return out
 
 
 # ---------------- 抓取任务 ----------------

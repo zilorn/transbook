@@ -1,7 +1,7 @@
-import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
-import { useNavigate } from '@solidjs/router'
+import { createSignal, For, onMount, Show } from 'solid-js'
 import { api } from './api'
-import type { Book, CrawlStatus, KakuyomuResult, SyosetuResult } from './types'
+import { CrawlJobList, useCrawlJobs } from './CrawlJobs'
+import type { KakuyomuResult, SyosetuResult } from './types'
 
 // 输入形如作品/章节链接或纯 ID 时直接爬取，否则按关键词搜索
 const NCODE_RE = /(?:ncode\.syosetu\.com\/)?n\d{4}[a-z]{2}/i
@@ -9,46 +9,35 @@ const WORK_ID_RE = /(?:kakuyomu\.jp\/works\/)?\d{10,}/
 
 type Site = 'syosetu' | 'kakuyomu'
 
-interface Job {
-  book: Book
-  status: CrawlStatus | null
-}
-
 const SITE_INFO: Record<Site, { name: string; desc: string; placeholder: string }> = {
   syosetu: {
-    name: 'syosetu（成为小说家吧）',
-    desc: '数据来源：syosetu.com。输入关键词搜索，或直接粘贴作品链接 / N コード爬取。',
-    placeholder: '关键词 / 作品链接 / N コード',
+    name: '成为小说家吧（syosetu）',
+    desc: '数据来源：syosetu.com。输入关键词搜索，或直接粘贴作品链接 / 作品编号爬取。',
+    placeholder: '关键词 / 作品链接 / 作品编号',
   },
   kakuyomu: {
-    name: 'kakuyomu（カクヨム）',
-    desc: '数据来源：kakuyomu.jp。输入关键词搜索（可按ジャンル多选过滤），或直接粘贴作品 / 章节链接爬取。',
+    name: 'KAKUYOMU',
+    desc: '数据来源：kakuyomu.jp。输入关键词搜索（可按类型多选过滤），或直接粘贴作品 / 章节链接爬取。',
     placeholder: '关键词 / 作品链接 / 作品 ID',
   },
 }
 
 export default function SearchPage() {
-  const navigate = useNavigate()
   const [site, setSite] = createSignal<Site>('syosetu')
   const [query, setQuery] = createSignal('')
   const [results, setResults] = createSignal<(SyosetuResult | KakuyomuResult)[] | null>(null)
   const [searching, setSearching] = createSignal(false)
-  const [jobs, setJobs] = createSignal<Job[]>([])
+  const { jobs, addJob } = useCrawlJobs()
   const [error, setError] = createSignal('')
-  // kakuyomu ジャンル多选过滤
+  // kakuyomu 类型多选过滤
   const [genres, setGenres] = createSignal<Record<string, string>>({})
   const [selGenres, setSelGenres] = createSignal<string[]>([])
 
   onMount(async () => {
     try {
       setGenres((await api.kakuyomuGenres()).genres)
-    } catch { /* 忽略，无 genre 也能搜 */ }
+    } catch { /* 忽略，无类型也能搜 */ }
   })
-
-  const statusApi = (j: Job) =>
-    j.book.source?.site === 'kakuyomu' ? api.kakuyomuStatus : api.syosetuStatus
-  const stopApi = (j: Job) =>
-    j.book.source?.site === 'kakuyomu' ? api.kakuyomuStop : api.syosetuStop
 
   const startFetch = async (url: string) => {
     setError('')
@@ -56,7 +45,7 @@ export default function SearchPage() {
       const book = site() === 'kakuyomu'
         ? await api.kakuyomuFetch(url)
         : await api.syosetuFetch(url)
-      setJobs((js) => [{ book, status: null }, ...js])
+      addJob(book)
     } catch (e: any) {
       setError(String(e.message || e))
     }
@@ -88,22 +77,6 @@ export default function SearchPage() {
   const toggleGenre = (g: string) => {
     setSelGenres((gs) => gs.includes(g) ? gs.filter((x) => x !== g) : [...gs, g])
   }
-
-  // 轮询进行中的爬取任务
-  const timer = setInterval(async () => {
-    const pending = jobs().filter((j) => !j.status || j.status.running)
-    if (!pending.length) return
-    const updated = await Promise.all(pending.map(async (j) => {
-      try {
-        return { book: j.book, status: await statusApi(j)(j.book.id) }
-      } catch {
-        return j
-      }
-    }))
-    const byId = new Map(updated.map((j) => [j.book.id, j]))
-    setJobs((js) => js.map((j) => byId.get(j.book.id) || j))
-  }, 2000)
-  onCleanup(() => clearInterval(timer))
 
   return (
     <div class="max-w-[860px]">
@@ -138,7 +111,7 @@ export default function SearchPage() {
         </button>
       </div>
 
-      {/* kakuyomu ジャンル多选 */}
+      {/* kakuyomu 类型多选 */}
       <Show when={site() === 'kakuyomu' && Object.keys(genres()).length > 0}>
         <div class="flex flex-wrap gap-x-4 gap-y-1.5 mb-3 text-[13px]">
           <For each={Object.entries(genres())}>
@@ -158,40 +131,7 @@ export default function SearchPage() {
 
       {/* 爬取任务进度 */}
       <Show when={jobs().length > 0}>
-        <div class="flex flex-col gap-2 mb-6">
-          <For each={jobs()}>
-            {(j) => (
-              <div class="bg-card border border-line rounded-[8px] p-3">
-                <div class="flex items-center justify-between gap-3">
-                  <div class="min-w-0">
-                    <span class="text-[14px] font-medium">{j.book.title}</span>
-                    <span class="text-[12px] text-muted ml-2">{j.book.source?.url}</span>
-                  </div>
-                  <div class="shrink-0 flex gap-2">
-                    <Show when={j.status?.running}>
-                      <button class="text-[13px]" onClick={() => stopApi(j)(j.book.id)}>停止</button>
-                    </Show>
-                    <Show when={j.status && !j.status.running && !j.status.error}>
-                      <button class="text-[13px]" onClick={() => navigate(`/books/${j.book.id}`)}>查看书籍</button>
-                    </Show>
-                  </div>
-                </div>
-                <div class="text-[12px] text-muted mt-1">
-                  <Show when={!j.status}>正在启动…</Show>
-                  <Show when={j.status?.running}>
-                    爬取中 {j.status!.done}/{j.status!.total || '?'}{j.status!.current ? `：${j.status!.current}` : ''}
-                  </Show>
-                  <Show when={j.status && !j.status.running && !j.status.error}>
-                    完成，共 {j.status!.done} 章
-                    </Show>
-                  <Show when={j.status?.error}>
-                    <span class="text-[#991b1b]">失败：{j.status!.error}（已抓 {j.status!.done} 章保留）</span>
-                  </Show>
-                </div>
-              </div>
-            )}
-          </For>
-        </div>
+        <CrawlJobList jobs={jobs()} />
       </Show>
 
       {/* 搜索结果 */}

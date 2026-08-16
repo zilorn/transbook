@@ -5,9 +5,11 @@ import type {
   Config,
   CrawlStatus,
   GlossaryTerm,
+  KakuyomuRankingsResult,
   KakuyomuResult,
   NewChapter,
   QueueStatus,
+  SyosetuRankingsResult,
   SyosetuResult,
   TranslateOptions,
 } from './types'
@@ -126,5 +128,9 @@ export const api = {
     req(`/api/kakuyomu/stop/${id}`, { method: 'POST' }),
   kakuyomuUpdate: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}/kakuyomu/update`, { method: 'POST' }),
+  syosetuRankings: (period: string, genre: string, kind: string): Promise<SyosetuRankingsResult> =>
+    req(`/api/syosetu/rankings?period=${period}&genre=${genre}&kind=${kind}`),
+  kakuyomuRankings: (genre: string, period: string, variation: string): Promise<KakuyomuRankingsResult> =>
+    req(`/api/kakuyomu/rankings?genre=${genre}&period=${period}&variation=${variation}`),
   exportUrl: (id: string, fmt: string): string => `/api/books/${id}/export?fmt=${fmt}`,
 }
