@@ -4,6 +4,8 @@
 - 只支持阅读软件必需的读操作；写操作一律 405。
 - 未翻译的章节回退原文，可托管本身已是译文的书籍。
 - EPUB 按需生成并缓存在 books/<id>/webdav.epub，源文件更新后自动重建。
+- 标记 no_translate（仅托管）且原始文件为 epub 的书直接返回原始 source.epub，
+  不重新打包；txt 源仍需打包为 EPUB。
 """
 from __future__ import annotations
 
@@ -94,6 +96,21 @@ def epub_cache_path(entry: dict) -> Path:
     return out
 
 
+def dav_file_path(entry: dict) -> Path:
+    """返回 WebDAV 实际供下载的文件。
+
+    标记 no_translate（仅托管）且原始文件为 epub 的书直接返回原始 source.epub；
+    txt 源及其他书返回按需生成的 EPUB。
+    """
+    book = entry["book"]
+    src_name = book.get("source_file") or ""
+    if book.get("no_translate") and src_name.lower().endswith(".epub"):
+        src = store.BOOKS_DIR / book["id"] / src_name
+        if src.exists():
+            return src
+    return epub_cache_path(entry)
+
+
 # ---------- WebDAV 协议 ----------
 
 def _enabled() -> bool:
@@ -153,18 +170,18 @@ async def webdav_read(request: Request, path: str = ""):
                                mtime=store.now())]
             if depth != "0":
                 for e in list_dav_books():
-                    epub = epub_cache_path(e)
+                    f = dav_file_path(e)
                     items.append(_propstat(
                         name=e["name"], href=_href(e["name"]), collection=False,
-                        size=epub.stat().st_size, mtime=epub.stat().st_mtime))
+                        size=f.stat().st_size, mtime=f.stat().st_mtime))
             return _multistatus(items)
         entry = _find_entry(path)
         if not entry:
             raise HTTPException(404, "文件不存在")
-        epub = epub_cache_path(entry)
+        f = dav_file_path(entry)
         return _multistatus([_propstat(
             name=entry["name"], href=_href(entry["name"]), collection=False,
-            size=epub.stat().st_size, mtime=epub.stat().st_mtime)])
+            size=f.stat().st_size, mtime=f.stat().st_mtime)])
 
     # GET / HEAD
     if not path:
@@ -172,7 +189,7 @@ async def webdav_read(request: Request, path: str = ""):
     entry = _find_entry(path)
     if not entry:
         raise HTTPException(404, "文件不存在")
-    return FileResponse(epub_cache_path(entry),
+    return FileResponse(dav_file_path(entry),
                         media_type="application/epub+zip",
                         filename=entry["name"])
 

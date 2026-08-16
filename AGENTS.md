@@ -122,6 +122,8 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   列出全部有章节的书籍（未翻译章节回退原文，可托管本身已是译文的书），
   文件名为 `<译名或原名>.epub`（重名加 `_<id>`），
   EPUB 按需生成并缓存为 `books/<id>/webdav.epub`，源文件（book.json/章节）更新后自动重建。
+  标记 `no_translate`（仅托管）且原始文件为 epub 的书直接返回原始 `source.epub`
+  （`dav_file_path`），不重新打包；txt 源仍需打包。
   无认证，仅供局域网使用。
 
 ## API 一览
