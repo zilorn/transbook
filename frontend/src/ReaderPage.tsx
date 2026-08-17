@@ -13,8 +13,10 @@ const THEMES: Record<ThemeKey, Theme> = {
   night: { name: '夜间', bg: '#16181d', text: '#a8adb5', line: '#2c313a' },
 }
 
-interface ReaderSettings { fontSize: number; theme: ThemeKey }
+interface ReaderSettings { fontSize: number; theme: ThemeKey; voice: string; rate: number }
 interface Progress { cid: string; y: number }
+
+const RATES = [0.75, 1, 1.25, 1.5, 2]
 
 const SETTINGS_KEY = 'reader-settings'
 const progressKey = (bookId: string) => `reader-progress:${bookId}`
@@ -25,9 +27,11 @@ function loadSettings(): ReaderSettings {
     return {
       fontSize: Math.min(26, Math.max(14, Number(s.fontSize) || 18)),
       theme: (s.theme in THEMES ? s.theme : 'light') as ThemeKey,
+      voice: typeof s.voice === 'string' ? s.voice : '',
+      rate: RATES.includes(Number(s.rate)) ? Number(s.rate) : 1,
     }
   } catch {
-    return { fontSize: 18, theme: 'light' }
+    return { fontSize: 18, theme: 'light', voice: '', rate: 1 }
   }
 }
 
@@ -38,14 +42,6 @@ function loadProgress(bookId: string): Progress | null {
   } catch {
     return null
   }
-}
-
-// epub 章节存的是完整 XHTML 文档；图片为 epub 内部相对路径无法加载，直接去掉；
-// 正文首个 h1-h3 即章节标题（与阅读器自身标题栏重复），一并去掉。
-function sanitizeEpub(html: string): string {
-  return html
-    .replace(/<img\b[^>]*>/gi, '')
-    .replace(/<h[1-3]\b[^>]*>[\s\S]*?<\/h[1-3]>/i, '')
 }
 
 export default function ReaderPage() {
@@ -59,6 +55,74 @@ export default function ReaderPage() {
   const [tocOpen, setTocOpen] = createSignal(false)
   const [panelOpen, setPanelOpen] = createSignal(false)
   const [settings, setSettings] = createSignal<ReaderSettings>(loadSettings())
+  const [previewImg, setPreviewImg] = createSignal('')
+  // ---- 听书（edge-tts，逐句连播）----
+  const [ttsOpen, setTtsOpen] = createSignal(false)
+  const [ttsPlaying, setTtsPlaying] = createSignal(false)
+  const [ttsBusy, setTtsBusy] = createSignal(false)
+  const [ttsError, setTtsError] = createSignal('')
+  const [voices, setVoices] = createSignal<Record<string, string>>({})
+  const [voiceDefault, setVoiceDefault] = createSignal('')
+  const [sentences, setSentences] = createSignal<string[]>([]) // 当前章节的朗读分句
+  const [ttsIdx, setTtsIdx] = createSignal(-1) // 当前朗读句下标（-1 = 未在朗读）
+  let audio: HTMLAudioElement | undefined
+  let wantPlay = false // 播放意图：切章/播报完自动续播都靠它
+  let playedCid = '' // 当前音频对应的章节 id（区分切章与换音色）
+  let sentLoad: { key: string; p: Promise<string[]> } | null = null // 分句清单加载缓存
+
+  // 分句规则与后端 tts.SEG_RE 一致（两边必须同步）：一句（含结尾标点）或连续换行
+  const SEG_RE = /[^。！？!?…\n]+[。！？!?…]*|\n+/g
+  interface Seg { t: string; si: number } // si=-1 为纯换行排版段，不朗读；其余与 sentences 顺序一一对应
+  const segments = (): Seg[] => {
+    const txt = content().trim()
+    if (!txt) return []
+    let si = 0
+    return (txt.match(SEG_RE) || []).map(t => ({ t, si: /^\s*$/.test(t) ? -1 : si++ }))
+  }
+
+  // epub 章节渲染后把文本节点按同一规则拆成句级 span[data-si]，
+  // 与后端 chapter_text 的提取口径一致（strip 每块、丢空块、去首个 h1-h3、跳过 style/script/title），
+  // 句序号因而与 sentences 清单一一对应，逐句高亮才能对上。
+  let segEl: HTMLDivElement | undefined
+  const applyEpubSegments = (el: HTMLElement) => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        const p = (n as Text).parentElement
+        return p && p.closest('style,script,title,noscript')
+          ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+      },
+    })
+    const nodes: Text[] = []
+    while (walker.nextNode()) nodes.push(walker.currentNode as Text)
+    let si = 0
+    for (const node of nodes) {
+      const stripped = node.data.trim()
+      if (!stripped) continue // 纯空白节点：后端对应空行已丢弃
+      const frag = document.createDocumentFragment()
+      for (const part of stripped.match(SEG_RE) || []) {
+        if (/^\s*$/.test(part)) { frag.appendChild(document.createTextNode(part)); continue }
+        const span = document.createElement('span')
+        span.dataset.si = String(si++)
+        span.textContent = part
+        frag.appendChild(span)
+      }
+      node.replaceWith(frag)
+    }
+  }
+
+  // epub 章节存的是完整 XHTML 文档；图片为 epub 内部相对路径，重写为后端图片接口
+  // （外链图保留原样，加载失败的图隐藏）；正文首个 h1-h3 与阅读器标题栏重复，去掉。
+  const processEpub = (html: string, cid: string): string =>
+    html
+      .replace(/<img\b[^>]*>/gi, (tag) => {
+        const m = tag.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
+        const src = m?.[1] ?? m?.[2] ?? m?.[3] ?? ''
+        if (!src) return ''
+        if (/^(?:https?:|data:|blob:)/i.test(src)) return tag
+        return tag.replace(m![0],
+          `src="${api.chapterImageUrl(bookId, cid, src)}" loading="lazy" onerror="this.style.display='none'"`)
+      })
+      .replace(/<h[1-3]\b[^>]*>[\s\S]*?<\/h[1-3]>/i, '')
 
   const chapters = () => book()?.chapters || []
   const idx = () => chapters().findIndex(c => c.id === params.cid)
@@ -86,7 +150,7 @@ export default function ReaderPage() {
         text = await api.chapterContent(bookId, c.id, false)
       }
       if (params.cid !== c.id) return // 等待期间已切到别章，丢弃
-      setContent(c.format === 'epub' ? sanitizeEpub(text) : text)
+      setContent(c.format === 'epub' ? processEpub(text, c.id) : text)
       setLoading(false)
       // 恢复上次的滚动位置；新章节回顶部并记为当前进度
       const saved = loadProgress(bookId)
@@ -103,6 +167,146 @@ export default function ReaderPage() {
   createEffect(() => {
     const c = chapter()
     if (c) void loadChapter(c)
+  })
+
+  // ---- 听书播放控制（逐句连播：当前句高亮，句间/章末自动接续）----
+  const curVoice = () => settings().voice || voiceDefault()
+  const sentenceUrl = (c: Chapter, i: number): string =>
+    api.ttsSentenceUrl(bookId, c.id, c.status === 'done', curVoice(), i)
+  const sentKey = (c: Chapter): string => `${c.id}:${c.status === 'done'}`
+
+  const loadSentences = (c: Chapter): Promise<string[]> => {
+    const key = sentKey(c)
+    if (sentLoad?.key === key) return sentLoad.p
+    const p = api.ttsSentences(bookId, c.id, c.status === 'done')
+      .then(r => r.sentences)
+      .catch((e: any) => { setTtsError(`分句加载失败：${e.message || e}`); return [] as string[] })
+    sentLoad = { key, p }
+    void p.then(list => {
+      if (sentLoad?.key === key) { setSentences(list); setTtsIdx(-1) }
+    })
+    return p
+  }
+
+  // 打开播放条或切章时预拉分句清单（txt 章节同时用于分句高亮渲染）；关闭时清空
+  createEffect(() => {
+    const c = chapter()
+    if (!c || !ttsOpen()) { sentLoad = null; setSentences([]); setTtsIdx(-1); return }
+    void loadSentences(c)
+  })
+
+  const ensureAudio = (): HTMLAudioElement => {
+    if (!audio) {
+      audio = new Audio()
+      audio.preload = 'auto'
+      audio.addEventListener('playing', () => { setTtsPlaying(true); setTtsBusy(false) })
+      audio.addEventListener('pause', () => setTtsPlaying(false))
+      audio.addEventListener('waiting', () => setTtsBusy(true))
+      audio.addEventListener('ended', () => {
+        if (!wantPlay) return
+        // 播完自动接下一句；本章播完连播下一章（切章由下面的 createEffect 接管换源）
+        if (ttsIdx() + 1 < sentences().length) playSentence(ttsIdx() + 1)
+        else if (idx() >= 0 && idx() < chapters().length - 1) next()
+        else { wantPlay = false; setTtsPlaying(false); setTtsBusy(false); setTtsIdx(-1) }
+      })
+      audio.addEventListener('error', () => {
+        setTtsBusy(false); setTtsPlaying(false)
+        if (wantPlay) setTtsError('语音加载失败，请检查后端是否能访问 edge-tts 服务')
+      })
+    }
+    return audio
+  }
+
+  const playSentence = (i: number) => {
+    const c = chapter()
+    if (!c || i < 0 || i >= sentences().length) return
+    const a = ensureAudio()
+    setTtsError('')
+    setTtsIdx(i)
+    setTtsBusy(true)
+    playedCid = c.id
+    a.src = sentenceUrl(c, i)
+    a.playbackRate = settings().rate
+    a.play().catch((e) => { setTtsBusy(false); setTtsError(String(e.message || e)) })
+    // 预取（触发后端预合成）下一句，减少句间停顿
+    if (i + 1 < sentences().length)
+      fetch(sentenceUrl(c, i + 1)).then(r => r.blob()).catch(() => {})
+  }
+
+  const playTts = async () => {
+    const c = chapter()
+    if (!c) return
+    const list = await loadSentences(c)
+    const now = chapter()
+    if (!now || sentKey(now) !== sentKey(c) || !wantPlay) return // 等待期间已切章/暂停
+    if (!list.length) { setTtsError('本章没有可朗读的文本'); wantPlay = false; return }
+    playSentence(0)
+  }
+
+  const toggleTts = () => {
+    setTtsOpen(true)
+    if (wantPlay) {
+      wantPlay = false
+      audio?.pause()
+    } else {
+      wantPlay = true
+      // 暂停在同一句中途则续播，否则从头开始
+      if (audio && playedCid === params.cid && ttsIdx() >= 0 && !audio.ended && audio.currentTime > 0) {
+        setTtsError('')
+        audio.play().catch((e) => setTtsError(String(e.message || e)))
+      } else {
+        void playTts()
+      }
+    }
+  }
+
+  const closeTts = () => {
+    wantPlay = false
+    audio?.pause()
+    setTtsOpen(false)
+    setTtsIdx(-1)
+  }
+
+  // 切章或换音色时，若处于播放意图则换源续播（换音色重读当前句，切章从首句开始）
+  createEffect(() => {
+    params.cid
+    settings().voice
+    if (!wantPlay || !chapter()) return
+    if (playedCid === params.cid && ttsIdx() >= 0) playSentence(ttsIdx())
+    else void playTts()
+  })
+
+  // 倍速即时生效
+  createEffect(() => {
+    if (audio) audio.playbackRate = settings().rate
+  })
+
+  // 朗读句自动滚动到视野中部
+  createEffect(() => {
+    const i = ttsIdx()
+    if (i >= 0 && ttsOpen())
+      document.querySelector(`[data-si="${i}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+
+  // epub 章节：渲染后拆分句级 span（每章内容只拆一次）
+  let segAppliedFor = ''
+  createEffect(() => {
+    const c = chapter()
+    const h = content()
+    if (!c || c.format !== 'epub' || !segEl || !h) return
+    const key = `${c.id}:${h.length}`
+    if (segAppliedFor === key) return
+    segAppliedFor = key
+    applyEpubSegments(segEl)
+  })
+
+  // epub 高亮靠切换 .tts-active（txt 由 Solid 内联样式绑定，不走这里）
+  createEffect(() => {
+    const i = ttsIdx()
+    const c = chapter()
+    if (!segEl || c?.format !== 'epub') return
+    segEl.querySelector('.tts-active')?.classList.remove('tts-active')
+    if (i >= 0) segEl.querySelector(`[data-si="${i}"]`)?.classList.add('tts-active')
   })
 
   // ---- 进度记忆（滚动节流保存）----
@@ -133,6 +337,9 @@ export default function ReaderPage() {
   onMount(async () => {
     window.addEventListener('scroll', onScroll, { passive: true })
     window.addEventListener('keydown', onKey)
+    void api.ttsVoices()
+      .then((v) => { setVoices(v.voices); setVoiceDefault(v.default) })
+      .catch(() => {})
     try {
       const b = await api.book(bookId)
       setBook(b)
@@ -156,6 +363,8 @@ export default function ReaderPage() {
     window.removeEventListener('scroll', onScroll)
     window.removeEventListener('keydown', onKey)
     document.body.style.background = ''
+    wantPlay = false
+    audio?.pause()
   })
 
   // 打开目录时滚动到当前章
@@ -189,6 +398,14 @@ export default function ReaderPage() {
                 <span class="opacity-50 text-[12px] ml-2">{idx() + 1}/{chapters().length}</span></>}
             </Show>
           </div>
+          <button class="border-0 px-2 shrink-0" title="听书"
+            onClick={toggleTts}>
+            <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+              <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+            </svg>
+          </button>
           <button class="border-0 px-2 shrink-0 text-[13px]" onClick={() => setPanelOpen(v => !v)}>Aa</button>
           <button class="border-0 px-2 shrink-0" title="目录" onClick={() => setTocOpen(true)}>
             <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -202,7 +419,8 @@ export default function ReaderPage() {
       </div>
 
       {/* 正文 */}
-      <div class="max-w-[800px] mx-auto px-4 md:px-6 pt-5 pb-8">
+      <div class="max-w-[800px] mx-auto px-4 md:px-6 pt-5"
+        style={{ 'padding-bottom': ttsOpen() ? '90px' : '32px' }}>
         <Show when={!loading()} fallback={<p class="text-center py-[60px] opacity-60">加载中…</p>}>
           <Show when={!error()} fallback={
             <div class="text-center py-[60px]">
@@ -218,14 +436,29 @@ export default function ReaderPage() {
                   <h1 class="text-[1.35em] font-bold mt-0 mb-6 leading-[1.5] break-all">
                     {c().title_translated || c().title}
                   </h1>
+                  {/* 听书逐句高亮：txt 打开播放条后按后端分句渲染 span（segments 与
+                      sentences 顺序一致）；epub 渲染后由 applyEpubSegments 拆出 span[data-si]，
+                      两者都只对当前朗读句加高亮 */}
                   <Show when={c().format === 'epub'} fallback={
                     <pre class="m-0 whitespace-pre-wrap break-words font-[inherit]"
                       style={{ 'font-size': `${settings().fontSize}px`, 'line-height': 1.9 }}>
-                      {content()}
+                      <Show when={ttsOpen() && sentences().length > 0} fallback={content()}>
+                        <For each={segments()}>{(seg) => seg.si < 0 ? seg.t : (
+                          <span data-si={seg.si} class="px-[1px]"
+                            classList={{ 'tts-active': seg.si === ttsIdx() }}>
+                            {seg.t}
+                          </span>
+                        )}</For>
+                      </Show>
                     </pre>
                   }>
                     <div class="preview-html break-words"
+                      ref={(el) => { segEl = el }}
                       style={{ 'font-size': `${settings().fontSize}px`, 'line-height': 1.9 }}
+                      onClick={(e) => {
+                        const t = e.target as HTMLElement
+                        if (t.tagName === 'IMG') setPreviewImg((t as HTMLImageElement).src)
+                      }}
                       innerHTML={content()} />
                   </Show>
                   <div class="reader-bar flex justify-between gap-2 mt-10 pt-5 border-t"
@@ -269,6 +502,61 @@ export default function ReaderPage() {
               </div>
             </div>
           </div>
+        </div>
+      </Show>
+
+      {/* 听书播放条 */}
+      <Show when={ttsOpen()}>
+        <div class="reader-bar fixed bottom-0 left-0 right-0 z-10 border-t"
+          style={{ background: theme().bg, 'border-color': theme().line }}>
+          <div class="max-w-[800px] mx-auto flex items-center gap-2 px-3 h-[52px]">
+            <button class="border-0 px-2 shrink-0" title={ttsPlaying() ? '暂停' : '播放'}
+              onClick={toggleTts}>
+              <Show when={ttsPlaying()} fallback={
+                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="6 4 20 12 6 20 6 4" />
+                </svg>
+              }>
+                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
+                </svg>
+              </Show>
+            </button>
+            <span class="flex-1 min-w-0 truncate text-[12px] opacity-60">
+              {ttsError() || (ttsBusy() ? '语音生成中…' : (
+                (ttsIdx() >= 0 ? `${ttsIdx() + 1}/${sentences().length} · ` : '') +
+                (chapter()?.title_translated || chapter()?.title || '')
+              ))}
+            </span>
+            <select class="shrink-0 w-[68px]" title="倍速"
+              value={String(settings().rate)}
+              onChange={(e) => setSettings(s => ({ ...s, rate: Number(e.currentTarget.value) }))}>
+              <For each={RATES}>
+                {(r) => <option value={r}>{r}×</option>}
+              </For>
+            </select>
+            <select class="shrink-0 max-w-[140px]"
+              value={settings().voice || voiceDefault()}
+              onChange={(e) => setSettings(s => ({ ...s, voice: e.currentTarget.value }))}>
+              <For each={Object.entries(voices())}>
+                {([id, name]) => <option value={id}>{name}</option>}
+              </For>
+            </select>
+            <button class="border-0 px-2 shrink-0" title="关闭听书" onClick={closeTts}>
+              <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </Show>
+
+      {/* 图片全屏预览 */}
+      <Show when={previewImg()}>
+        <div class="fixed inset-0 z-30 bg-black/85 flex items-center justify-center p-4 cursor-zoom-out"
+          onClick={() => setPreviewImg('')}>
+          <img src={previewImg()} class="max-w-full max-h-full object-contain" alt="" />
         </div>
       </Show>
 

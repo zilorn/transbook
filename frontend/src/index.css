@@ -102,9 +102,17 @@
     font-size: 13px;
   }
 
-  /* epub 译文 HTML 内的图片不超出预览容器 */
+  /* epub 译文 HTML 内的图片不超出预览容器，点击可全屏预览 */
   .preview-html img {
     max-width: 100%;
+    cursor: zoom-in;
+  }
+
+  /* 听书逐句高亮（txt 由 Solid 内联样式，epub 靠拆分文本节点后加此类） */
+  .tts-active {
+    background: rgba(250, 204, 21, 0.35);
+    border-radius: 3px;
+    transition: background 0.2s;
   }
 
   /* 阅读器工具栏/目录内的按钮跟随阅读主题色，不用默认白底 */
@@ -117,5 +125,13 @@
     background: #2563eb;
     border-color: #2563eb;
     color: #fff;
+  }
+  .reader-bar select {
+    background: transparent;
+    color: inherit;
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 6px;
+    padding: 3px 6px;
+    font-size: 12px;
   }
 }

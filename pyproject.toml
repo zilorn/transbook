@@ -10,6 +10,7 @@ dependencies = [
     "ebooklib>=0.18",
     "beautifulsoup4>=4.12",
     "python-multipart>=0.0.9",
+    "edge-tts>=6.1",
 ]
 
 [tool.uv]

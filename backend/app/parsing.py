@@ -60,14 +60,9 @@ BLOCK_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "td",
 HEADING_TAGS = ["h1", "h2", "h3"]
 
 
-def parse_epub(path: Path) -> tuple[dict, list[dict]]:
-    """返回 (meta, chapters)。chapters: [{id, title, body(html), format: 'html'}]"""
-    book = epub.read_epub(str(path), options={"ignore_ncx": True})
-    meta = {
-        "title": (book.get_metadata("DC", "title") or [("", {})])[0][0] or path.stem,
-        "author": (book.get_metadata("DC", "creator") or [("", {})])[0][0] or "",
-    }
-    chapters: list[dict] = []
+def _spine_docs(book) -> list[tuple[str, object, str, object]]:
+    """按 spine 顺序返回 [(chapter_id, item, html, soup)]，跳过 nav/ncx 与无文本文档。"""
+    docs: list[tuple[str, object, str, object]] = []
     n = 0
     seen: set[str] = set()
     for entry in book.spine:
@@ -82,16 +77,35 @@ def parse_epub(path: Path) -> tuple[dict, list[dict]]:
         soup = BeautifulSoup(html, "html.parser")
         if not soup.get_text().strip():
             continue
+        n += 1
+        docs.append((f"ch{n:04d}", item, html, soup))
+    return docs
+
+
+def parse_epub(path: Path) -> tuple[dict, list[dict]]:
+    """返回 (meta, chapters)。chapters: [{id, title, body(html), format: 'html'}]"""
+    book = epub.read_epub(str(path), options={"ignore_ncx": True})
+    meta = {
+        "title": (book.get_metadata("DC", "title") or [("", {})])[0][0] or path.stem,
+        "author": (book.get_metadata("DC", "creator") or [("", {})])[0][0] or "",
+    }
+    chapters: list[dict] = []
+    for n, (cid, item, html, soup) in enumerate(_spine_docs(book), 1):
         heading = soup.find(HEADING_TAGS)
         title = heading.get_text().strip() if heading else Path(item.get_name()).stem
-        n += 1
         chapters.append({
-            "id": f"ch{n:04d}",
+            "id": cid,
             "title": title or f"第 {n} 章",
             "body": html,
             "format": "html",
         })
     return meta, chapters
+
+
+def epub_chapter_files(path: Path) -> dict[str, str]:
+    """章节 id → epub 内部文档路径（编号与 parse_epub 一致），供章节图片路径解析。"""
+    book = epub.read_epub(str(path), options={"ignore_ncx": True})
+    return {cid: item.get_name() for cid, item, _, _ in _spine_docs(book)}
 
 
 # ---------------- HTML 翻译单元 ----------------

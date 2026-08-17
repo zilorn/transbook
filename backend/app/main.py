@@ -1,15 +1,20 @@
-"""FastAPI 入口：上传、书籍管理、术语表、翻译控制、导出。"""
+"""FastAPI 入口：上传、书籍管理、术语表、翻译控制、导出、听书（TTS）、章节图片。"""
 from __future__ import annotations
 
+import asyncio
+import mimetypes
+import posixpath
 import re
+import zipfile
 from pathlib import Path
+from urllib.parse import unquote
 
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import parsing, store, translator, webdav
+from . import parsing, store, translator, tts, webdav
 from .crawlers import kakuyomu, syosetu
 
 app = FastAPI(title="TranLatexBook")
@@ -296,6 +301,118 @@ def chapter_content(book_id: str, chapter_id: str, translated: bool = False):
     if not p.exists():
         raise HTTPException(404, "内容不存在")
     return PlainTextResponse(p.read_text(encoding="utf-8", errors="replace"))
+
+
+# ---------- 听书（edge-tts） ----------
+
+@app.get("/api/tts/voices")
+def tts_voices():
+    return {"voices": tts.VOICES, "default": tts.DEFAULT_VOICE}
+
+
+def _find_chapter(book_id: str, chapter_id: str) -> dict:
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    chapter = next((c for c in book["chapters"] if c["id"] == chapter_id), None)
+    if not chapter:
+        raise HTTPException(404, "章节不存在")
+    return chapter
+
+
+def _check_voice(voice: str) -> str:
+    voice = voice or tts.DEFAULT_VOICE
+    if voice not in tts.VOICES:
+        raise HTTPException(400, "不支持的音色")
+    return voice
+
+
+@app.get("/api/books/{book_id}/chapters/{chapter_id}/tts/sentences")
+def tts_sentences(book_id: str, chapter_id: str, translated: bool = False):
+    """章节朗读分句清单：前端据此逐句连播并对齐高亮（分段规则与前端一致）。"""
+    chapter = _find_chapter(book_id, chapter_id)
+    return {"sentences": tts.split_sentences(tts.chapter_text(book_id, chapter, translated))}
+
+
+@app.get("/api/books/{book_id}/chapters/{chapter_id}/tts/sentence")
+async def tts_sentence(book_id: str, chapter_id: str, idx: int = Query(...),
+                       translated: bool = False, voice: str = ""):
+    """单句语音（mp3）。命中缓存直接返回文件；否则合成后落盘缓存再返回。"""
+    chapter = _find_chapter(book_id, chapter_id)
+    voice = _check_voice(voice)
+    try:
+        path = await asyncio.wait_for(
+            tts.synthesize_sentence(book_id, chapter, translated, voice, idx), timeout=60)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except TimeoutError:
+        raise HTTPException(504, "语音合成超时")
+    except Exception as e:
+        raise HTTPException(502, f"语音合成失败: {e}")
+    return FileResponse(path, media_type="audio/mpeg")
+
+
+# ---------- 章节图片（epub 内嵌图） ----------
+
+_epub_files_cache: dict[str, tuple[float, dict[str, str]]] = {}
+
+
+def _epub_chapter_file(epub_path: Path, chapter_id: str) -> str | None:
+    """章节 id → epub 内部文档路径，按文件 mtime 缓存。"""
+    key = str(epub_path)
+    mtime = epub_path.stat().st_mtime
+    hit = _epub_files_cache.get(key)
+    if not hit or hit[0] != mtime:
+        hit = (mtime, parsing.epub_chapter_files(epub_path))
+        _epub_files_cache[key] = hit
+    return hit[1].get(chapter_id)
+
+
+@app.get("/api/books/{book_id}/chapters/{chapter_id}/image")
+def chapter_image(book_id: str, chapter_id: str, src: str = ""):
+    """epub 章节内嵌图片：按章节文档路径解析相对 src，从原始 epub 中读取。"""
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    source_file = book.get("source_file") or ""
+    epub_path = store.BOOKS_DIR / book_id / source_file
+    if not source_file.lower().endswith(".epub") or not epub_path.exists():
+        raise HTTPException(404, "该书没有 epub 源文件")
+    item_name = _epub_chapter_file(epub_path, chapter_id)
+    if not item_name or not src:
+        raise HTTPException(404, "图片不存在")
+    rel = posixpath.normpath(
+        posixpath.join(posixpath.dirname(item_name), unquote(src))).lstrip("/")
+    if rel.startswith(".."):
+        raise HTTPException(400, "非法的图片路径")
+    try:
+        with zipfile.ZipFile(epub_path) as zf:
+            names = zf.namelist()
+            if rel in names:
+                data = zf.read(rel)
+            else:
+                # 部分 epub 的 HTML 相对路径与 zip 实际结构不一致，按同名文件兜底，
+                # 多个同名时取与解析路径后缀重合最长者
+                base = posixpath.basename(rel)
+                cands = [n for n in names if posixpath.basename(n) == base]
+                if not cands:
+                    raise KeyError(rel)
+                best = max(cands, key=lambda n: _common_suffix_len(n, rel))
+                data = zf.read(best)
+    except KeyError:
+        raise HTTPException(404, "图片不存在")
+    media_type = mimetypes.guess_type(rel)[0] or "application/octet-stream"
+    return Response(content=data, media_type=media_type,
+                    headers={"Cache-Control": "max-age=86400"})
+
+
+def _common_suffix_len(a: str, b: str) -> int:
+    n = 0
+    for x, y in zip(reversed(a), reversed(b)):
+        if x != y:
+            break
+        n += 1
+    return n
 
 
 # ---------- 术语表 ----------

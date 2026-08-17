@@ -106,6 +106,14 @@ export const api = {
     req(`/api/books/${id}/toc/retranslate`, { method: 'POST' }),
   chapterContent: (id: string, cid: string, translated = false): Promise<string> =>
     reqText(`/api/books/${id}/chapters/${cid}/content${translated ? '?translated=true' : ''}`),
+  ttsVoices: (): Promise<{ voices: Record<string, string>; default: string }> =>
+    req('/api/tts/voices'),
+  ttsSentences: (id: string, cid: string, translated: boolean): Promise<{ sentences: string[] }> =>
+    req(`/api/books/${id}/chapters/${cid}/tts/sentences?translated=${translated}`),
+  ttsSentenceUrl: (id: string, cid: string, translated: boolean, voice: string, idx: number): string =>
+    `/api/books/${id}/chapters/${cid}/tts/sentence?idx=${idx}&translated=${translated}&voice=${encodeURIComponent(voice)}`,
+  chapterImageUrl: (id: string, cid: string, src: string): string =>
+    `/api/books/${id}/chapters/${cid}/image?src=${encodeURIComponent(src)}`,
   syosetuSearch: (q: string): Promise<{ results: SyosetuResult[] }> =>
     req(`/api/syosetu/search?q=${encodeURIComponent(q)}`),
   syosetuFetch: (url: string): Promise<Book> =>
