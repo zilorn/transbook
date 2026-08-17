@@ -143,7 +143,8 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   当前章节，否则切章后内容未加载完时会拿上一章的句子接着读。播放/暂停按钮只随播放意图
   （`wantPlay`/`setWant`）变化——句间换 audio.src 触发的 pause/playing 事件不再驱动图标；
   暂停/关闭/切章时递增 `playGen`，在途的下一句合成等待被作废（句间隙暂停也能立刻停住）。
-  播放控件是右下悬浮球（SVG 播放/暂停图标）+ 上方悬浮卡片（进度/倍速/音色/关闭），
+  播放控件是右下悬浮球（SVG 播放/暂停图标）+ 上方悬浮卡片（进度/上一句/下一句/倍速/音色/关闭），
+  上一句/下一句（`skipSentence`）播放中跳句重读（递增 `playGen` 作废在途合成），暂停中只移动高亮位置；
   浮起避开手机底部导航栏遮挡，不再是贴底通栏。
 - **章节图片**：`GET .../image?src=` 按 `parsing.epub_chapter_files`（章节 id → epub 内部
   文档路径，与 parse_epub 编号一致，按 mtime 缓存）解析 `<img>` 相对 src 后从原始

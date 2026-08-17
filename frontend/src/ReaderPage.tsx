@@ -324,6 +324,23 @@ export default function ReaderPage() {
     }
   }
 
+  // 上一句/下一句：播放中跳句重读（递增 playGen 作废当前句的在途合成与 ended 接续）；
+  // 暂停中只移动高亮位置，不自动开播
+  const skipSentence = (d: number) => {
+    const total = sentences().length
+    if (!total) return
+    const i = Math.min(Math.max((ttsIdx() < 0 ? 0 : ttsIdx()) + d, 0), total - 1)
+    consecFails = 0
+    if (wantPlay) {
+      playGen++
+      audio?.pause()
+      void playSentence(i)
+    } else {
+      audio?.pause()
+      setTtsIdx(i)
+    }
+  }
+
   const closeTts = () => {
     setWant(false)
     playGen++
@@ -588,6 +605,12 @@ export default function ReaderPage() {
                   <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
                 </svg>
               </button>
+            </div>
+            <div class="flex gap-2 mb-2">
+              <button class="small flex-1" disabled={!sentences().length}
+                title="上一句" onClick={() => skipSentence(-1)}>⏮ 上一句</button>
+              <button class="small flex-1" disabled={!sentences().length}
+                title="下一句" onClick={() => skipSentence(1)}>下一句 ⏭</button>
             </div>
             <div class="flex gap-2">
               <select class="shrink-0 w-[62px]" title="倍速"
