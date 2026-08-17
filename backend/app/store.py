@@ -167,12 +167,26 @@ def save_book(book: dict) -> None:
 
 def list_books() -> list[dict]:
     out = []
+    prog_map = _read_json(PROGRESS_PATH, {})
+    if not isinstance(prog_map, dict):
+        prog_map = {}
     for p in sorted(BOOKS_DIR.glob("*/book.json")):
         b = _read_json(p, None)
         if not b:
             continue
         total = len(b.get("chapters", []))
         done = sum(1 for c in b.get("chapters", []) if c.get("status") == "done")
+        # 阅读进度：上次读到的章节（序号 + 标题，译名优先），无记录为 None
+        read_progress = None
+        prog = prog_map.get(b["id"])
+        if isinstance(prog, dict) and isinstance(prog.get("cid"), str):
+            for i, c in enumerate(b.get("chapters", [])):
+                if c.get("id") == prog["cid"]:
+                    read_progress = {
+                        "index": i + 1,
+                        "title": c.get("title_translated") or c.get("title") or "",
+                    }
+                    break
         out.append({
             "id": b["id"],
             "title": b.get("title") or "",
@@ -186,6 +200,7 @@ def list_books() -> list[dict]:
             "glossary_count": len(b.get("glossary") or []),
             "source": b.get("source"),
             "no_translate": bool(b.get("no_translate")),
+            "read_progress": read_progress,
         })
     out.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
     return out

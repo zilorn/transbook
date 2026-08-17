@@ -123,9 +123,11 @@ export default function BookList() {
             <div class="bg-card border border-line rounded-[10px] p-3.5 cursor-pointer hover:border-primary"
               onClick={() => openBook(b.id)}>
               <div class="font-semibold mb-1 break-all">{b.title_translated || b.title}</div>
-              <Show when={b.title_translated && b.title_translated !== b.title}>
-                <div class="text-muted text-[13px]">{b.title}</div>
-              </Show>
+              <div class="text-muted text-[13px] mb-1 truncate" title={b.read_progress?.title || ''}>
+                {b.read_progress
+                  ? `读至 第${b.read_progress.index}章 ${b.read_progress.title}`
+                  : '未阅读'}
+              </div>
               <div class="flex gap-1.5 flex-wrap my-2">
                 <span class={BADGE}>{b.format}</span>
                 <Show when={b.no_translate}>
@@ -141,12 +143,6 @@ export default function BookList() {
                   <span class={BADGE}>术语 {b.glossary_count}</span>
                 </Show>
               </div>
-              <Show when={!b.no_translate}>
-                <div class="h-1.5 bg-[#e5e7eb] rounded-[3px] overflow-hidden my-2">
-                  <div class="h-full bg-primary transition-[width] duration-[0.4s]"
-                    style={{ width: `${b.chapters ? (b.done / b.chapters) * 100 : 0}%` }} />
-                </div>
-              </Show>
               <button class="danger small" onClick={(e) => remove(e, b.id)}>删除</button>
             </div>
           )}

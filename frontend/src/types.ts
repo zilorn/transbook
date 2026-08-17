@@ -44,6 +44,8 @@ export interface BookSummary {
   source?: BookSource | null
   // 无需翻译标记：仅托管（阅读/导出/WebDAV），不参与翻译
   no_translate: boolean
+  // 阅读进度：上次读到的章节（序号 + 标题，译名优先），从未阅读为 null
+  read_progress?: { index: number; title: string } | null
 }
 
 export type ChapterStatus = 'pending' | 'translating' | 'done' | 'error'
