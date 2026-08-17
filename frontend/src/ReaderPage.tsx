@@ -226,11 +226,15 @@ export default function ReaderPage() {
     return p
   }
 
-  // 后台预缓存本章全部音频（2 并发 worker），播到时即时出声
+  // 后台预缓存音频（4 并发 worker），从当前朗读位置向后预取，播到时即时出声。
+  // 冷缓存设备（手机首次播放、或音色与桌面端不同导致服务端缓存全部 miss）每句合成
+  // 约 1.5s：预取并发不足、或从第 0 句预取浪费在已播句上，都会被播放追上，
+  // 表现为每句"语音生成中"、读一句停一句。
+  const PREFETCH_WORKERS = 4
   const prefetchAll = () => {
     const gen = ++prefetchGen
     const total = sentences().length
-    let next = 0
+    let next = Math.max(ttsIdx(), 0) // 从当前位置向后预取，已播过的句子多数已在缓存
     const worker = async () => {
       while (gen === prefetchGen) {
         const i = next++
@@ -238,8 +242,7 @@ export default function ReaderPage() {
         try { await getAudio(i) } catch { /* 失败句跳过，播到时会重试 */ }
       }
     }
-    void worker()
-    void worker()
+    for (let w = 0; w < PREFETCH_WORKERS; w++) void worker()
   }
 
   const ensureAudio = (): HTMLAudioElement => {
@@ -310,7 +313,7 @@ export default function ReaderPage() {
       setTtsError(String(e?.message || e))
     })
     // 预取随后几句，减少句间停顿
-    for (let j = i + 1; j < Math.min(i + 4, sentences().length); j++) getAudio(j).catch(() => {})
+    for (let j = i + 1; j < Math.min(i + 6, sentences().length); j++) getAudio(j).catch(() => {})
   }
 
   const playTts = () => {
@@ -350,6 +353,7 @@ export default function ReaderPage() {
       playGen++
       audio?.pause()
       void playSentence(i)
+      prefetchAll() // 跳句后从新位置重新向后预取（playSentence 已同步更新 ttsIdx）
     } else {
       audio?.pause()
       setTtsIdx(i)

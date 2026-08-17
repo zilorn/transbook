@@ -1,13 +1,14 @@
 import { A, HashRouter, Route, useLocation } from '@solidjs/router'
-import { createSignal, onMount, Show, type ParentProps } from 'solid-js'
+import { createSignal, lazy, onMount, Show, type ParentProps } from 'solid-js'
 import { config, loadConfig, setSettingsOpen, settingsOpen } from './state'
-import BookList from './BookList'
-import BookDetail from './BookDetail'
-import ReaderPage from './ReaderPage'
-import TranslatePage from './TranslatePage'
-import SearchPage from './SearchPage'
-import DiscoverPage from './DiscoverPage'
 import Settings from './Settings'
+
+const BookList = lazy(() => import('./BookList'))
+const BookDetail = lazy(() => import('./BookDetail'))
+const ReaderPage = lazy(() => import('./ReaderPage'))
+const TranslatePage = lazy(() => import('./TranslatePage'))
+const SearchPage = lazy(() => import('./SearchPage'))
+const DiscoverPage = lazy(() => import('./DiscoverPage'))
 
 const NAV = 'flex items-center gap-2 px-3 py-2 rounded-[6px] text-[14px] no-underline'
 const NAV_ACTIVE = 'bg-[#dbeafe] text-[#1d4ed8] font-medium'
