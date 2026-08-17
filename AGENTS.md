@@ -1,4 +1,4 @@
-# TranLatexBook — 书本翻译 Web 应用
+# TransBook — 书本翻译 Web 应用
 
 通过 DeepSeek API 翻译整本书：上传 epub/txt → 自动生成人名/地名/术语表（可查看编辑）→
 按章并发翻译（标题与正文分离、大章自动分段）→ 导出 epub/txt。翻译任务在本地后端执行，全部数据落盘持久化。
@@ -22,7 +22,7 @@ backend/
     parsing.py     # txt 正则分章、epub 解析/生成、HTML 翻译单元抽取
     deepseek.py    # DeepSeek API 客户端（chat 支持按 KeyPool 条目调用）
     translator.py  # 术语表生成 + KeyPool 多 key 并发翻译流水线 + 队列执行器（asyncio）
-    tts.py         # 听书（edge-tts）：任意文本合成，mp3 按 音色+文本 哈希全局缓存（data/tts_cache/）
+    tts.py         # 听书（edge-tts）：任意文本合成，mp3 按 音色+倍速+文本 哈希全局缓存（data/tts_cache/）
     crawlers/      # 站点爬虫包（main.py 经 `from .crawlers import syosetu, kakuyomu` 使用）
       http.py      # 共享限速 HTTP 出口 HttpGate（串行 + 抖动 + 风控退避），每站点一个实例
       tasks.py     # 共享抓取任务管理 CrawlRunner（整书抓取/增量更新/进度/停止/逐章落盘）
@@ -84,7 +84,7 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
 - **听书（edge-tts，逐句）**：**前端自行分句、直接把每句文本发给后端合成**——渲染的句
   与朗读的句天然是同一份，逐句高亮必然对齐，后端不参与分句/对齐。`POST /api/tts/speak`
-  （`{text, voice}`）合成任意文本为 mp3，按 `sha1(音色+文本)` 全局缓存到
+  （`{text, voice, rate}`）合成任意文本为 mp3，按 `sha1(音色+倍速+文本)` 全局缓存到
   `data/tts_cache/`（跨书复用；合成写唯一临时文件，完成转正，中断删残片）；
   文本上限 `MAX_TEXT_CHARS`（1000 字）防滥用。音色白名单 `tts.VOICES`（中文显示名），
   非法音色 400。前端分句规则 `SEG_RE`（句读标点/换行）：txt 始终按句渲染
@@ -105,12 +105,19 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   并自动滚动到视野中部；切章/换音色时若处于播放意图（`wantPlay`）
   自动换源续播（换音色重读当前句）。朗读句清单以 `contentCid` 门控：content 必须属于
   当前章节，否则切章后内容未加载完时会拿上一章的句子接着读。播放/暂停按钮只随播放意图
-  （`wantPlay`/`setWant`）变化——句间换 audio.src 触发的 pause/playing 事件不再驱动图标；
+  （`wantPlay`/`setWant`）变化；
   暂停/关闭/切章时递增 `playGen`，在途的下一句合成等待被作废（句间隙暂停也能立刻停住）。
-  切章/换音色续播的 effect 里 `ttsIdx` 必须 `untrack` 读取——否则 `playSentence` 的
-  `setTtsIdx` 会重触 effect，同一句被重复 `playSentence`，两次 src 赋值互相打断 `play()`
-  （移动端报 "The play() request was interrupted by a new load request"，读一句停一句）；
-  `play().catch` 对 AbortError（被新 load/pause 打断）静默忽略。
+  **播放用 Web Audio 而非 HTMLAudio**：HTMLAudio 在移动端每次换 src/play 都要重建媒体管线
+  （数百 ms，双元素预载也不提前解码），句间必停顿；改为 `AudioContext` +
+  逐句 `decodeAudioData`（解码结果不缓存，整章 PCM 上百 MB 内存吃不消；blob 缓存照走
+  `audioCache`），`armNext` 预解码下一句并在当前句结束时刻 `start(at)` 精确调度
+  （采样级无缝；解码慢于剩余时长退化为立即开播），
+  `onSrcEnded` 里把预调度源记账接管为当前句。倍速不走前端 playbackRate
+  （Web Audio 重采样会变调）：请求带 `rate`，后端 edge-tts 生成时生效（保调变速）；
+  换倍速 = 清本章音频缓存（`playKey` 含倍速），保持位置重读当前句，预取按新倍速重启。暂停=`ctx.suspend()` 冻结时钟
+  （在播句与预调度句一起停住），续播=`ctx.resume()`；跳句/切章/关闭用 `killSrc`
+  停源并摘除 onended（只有自然播完才走接续）。切章/换音色续播的 effect 里 `ttsIdx`
+  必须 `untrack` 读取——否则 `playSentence` 的 `setTtsIdx` 会重触 effect，同一句被重复播放。
   播放控件是右下悬浮球（SVG 播放/暂停图标）+ 上方悬浮卡片（进度/上一句/下一句/倍速/音色/关闭），
   上一句/下一句（`skipSentence`）播放中跳句重读（递增 `playGen` 作废在途合成），暂停中只移动高亮位置；
   浮起避开手机底部导航栏遮挡，不再是贴底通栏。

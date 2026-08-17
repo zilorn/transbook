@@ -126,17 +126,17 @@ export const api = {
     }),
   ttsVoices: (): Promise<{ voices: Record<string, string>; default: string }> =>
     req('/api/tts/voices'),
-  ttsSpeak: (text: string, voice: string): Promise<Blob> =>
+  ttsSpeak: (text: string, voice: string, rate: number): Promise<Blob> =>
     reqBlob('/api/tts/speak', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text, voice }),
+      body: JSON.stringify({ text, voice, rate }),
     }),
-  ttsWarm: (texts: string[], voice: string): Promise<{ ok: boolean; done: number; failed: number }> =>
+  ttsWarm: (texts: string[], voice: string, rate: number): Promise<{ ok: boolean; done: number; failed: number }> =>
     req('/api/tts/warm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ texts, voice }),
+      body: JSON.stringify({ texts, voice, rate }),
     }),
   chapterImageUrl: (id: string, cid: string, src: string): string =>
     `/api/books/${id}/chapters/${cid}/image?src=${encodeURIComponent(src)}`,

@@ -349,11 +349,19 @@ def _check_voice(voice: str) -> str:
 class TtsSpeakReq(BaseModel):
     text: str
     voice: str = ""
+    rate: float = 1.0
 
 
 class TtsWarmReq(BaseModel):
     texts: list[str]
     voice: str = ""
+    rate: float = 1.0
+
+
+def _check_rate(rate: float) -> float:
+    if not 0.5 <= rate <= 2.0:
+        raise HTTPException(400, "不支持的倍速（0.5~2.0）")
+    return rate
 
 
 @app.post("/api/tts/warm")
@@ -364,12 +372,13 @@ async def tts_warm(req: TtsWarmReq):
     批量预热由后端 asyncio 高并发执行，不受浏览器连接数限制。
     """
     voice = _check_voice(req.voice)
+    rate = _check_rate(req.rate)
     if len(req.texts) > 100:
         raise HTTPException(400, "单批最多 100 句")
     if any(len(t) > tts.MAX_TEXT_CHARS for t in req.texts):
         raise HTTPException(400, f"存在超长文本（>{tts.MAX_TEXT_CHARS} 字）")
     try:
-        done, failed = await asyncio.wait_for(tts.warm_cache(req.texts, voice), timeout=180)
+        done, failed = await asyncio.wait_for(tts.warm_cache(req.texts, voice, rate), timeout=180)
     except TimeoutError:
         raise HTTPException(504, "批量合成超时")
     return {"ok": True, "done": done, "failed": failed}
@@ -377,10 +386,11 @@ async def tts_warm(req: TtsWarmReq):
 
 @app.post("/api/tts/speak")
 async def tts_speak(req: TtsSpeakReq):
-    """任意文本语音（mp3）：前端自行分句后直接发句文本合成，按 音色+文本 哈希全局缓存。"""
+    """任意文本语音（mp3）：前端自行分句后直接发句文本合成，按 音色+倍速+文本 哈希全局缓存。"""
     voice = _check_voice(req.voice)
+    rate = _check_rate(req.rate)
     try:
-        path = await asyncio.wait_for(tts.synthesize_text(req.text, voice), timeout=60)
+        path = await asyncio.wait_for(tts.synthesize_text(req.text, voice, rate), timeout=60)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except TimeoutError:

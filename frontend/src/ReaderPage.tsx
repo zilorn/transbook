@@ -75,14 +75,22 @@ export default function ReaderPage() {
   const [voices, setVoices] = createSignal<Record<string, string>>({})
   const [voiceDefault, setVoiceDefault] = createSignal('')
   const [ttsIdx, setTtsIdx] = createSignal(-1) // 当前朗读句下标（-1 = 未在朗读）
-  let audio: HTMLAudioElement | undefined
+  // Web Audio 播放：HTMLAudio 在移动端每次换 src/play 都要重建媒体管线（数百 ms），
+  // 双元素预载也不会提前解码，句间必停顿；Web Audio 提前把下一句解码成 AudioBuffer，
+  // 在当前句结束时刻 start(at) 精确调度（采样级无缝），暂停 = ctx.suspend() 冻结时钟。
+  let actx: AudioContext | undefined
+  let curSrc: AudioBufferSourceNode | undefined // 正在播的句
+  let nextSrc: AudioBufferSourceNode | undefined // 已预调度的下一句
+  let curEndAt = 0 // curSrc 预计结束时刻（actx 时钟，秒）
+  let nextEndAt = 0
+  let nextIdx = -1 // nextSrc 对应的句号（-1=无预调度）
+  let nextKey = ''
   let wantPlay = false // 播放意图：切章/播报完自动续播都靠它
   let playGen = 0 // 播放代际：暂停/关闭/切章时递增，作废在途的合成等待与下一句接续
   // 播放/暂停按钮只随播放意图变（句间换音频触发的 pause/playing 事件不再让图标闪烁）
   const setWant = (v: boolean) => { wantPlay = v; setTtsPlaying(v) }
   let playedKey = '' // 当前音频对应的 章节id:音色（区分切章与换音色）
   let consecFails = 0 // 连续合成/播放失败句数，超阈值才停止
-  let blobUrl = ''
   const audioCache = new Map<number, Promise<Blob>>() // 本章音频缓存：句号 → 合成 Promise（失败不缓存）
   let prefetchGen = 0 // 预缓存代际：切章/换音色时作废旧的后台预取
 
@@ -215,13 +223,14 @@ export default function ReaderPage() {
 
   // ---- 听书播放控制（逐句连播：当前句高亮，句间/章末自动接续，失败句跳过）----
   const curVoice = () => settings().voice || voiceDefault()
-  const playKey = () => `${params.cid}:${curVoice()}`
+  // 倍速进 key：音频由后端按倍速生成（edge-tts rate 参数保调变速），换倍速等于换一批音频
+  const playKey = () => `${params.cid}:${curVoice()}@${settings().rate}`
 
   // 合成并缓存第 i 句音频（Promise 缓存，并发调用共享；失败不缓存，下次重试）
   const getAudio = (i: number): Promise<Blob> => {
     let p = audioCache.get(i)
     if (!p) {
-      p = api.ttsSpeak(sentences()[i], curVoice())
+      p = api.ttsSpeak(sentences()[i], curVoice(), settings().rate)
       p.catch(() => audioCache.delete(i))
       audioCache.set(i, p)
     }
@@ -236,6 +245,7 @@ export default function ReaderPage() {
   const prefetchAll = () => {
     const gen = ++prefetchGen
     const total = sentences().length
+    const rate = settings().rate
     let next = Math.max(ttsIdx(), 0) // 从当前位置向后预取，已播过的句子多数已在缓存
     const worker = async () => {
       while (gen === prefetchGen) {
@@ -248,7 +258,7 @@ export default function ReaderPage() {
           if (!audioCache.has(i)) texts.push(sentences()[i])
         if (!texts.length) continue
         try {
-          await api.ttsWarm(texts, curVoice())
+          await api.ttsWarm(texts, curVoice(), rate)
         } catch { /* 预热失败不阻塞播放，播到时逐句现合成 */ }
       }
     }
@@ -256,26 +266,93 @@ export default function ReaderPage() {
     void worker()
   }
 
-  const ensureAudio = (): HTMLAudioElement => {
-    if (!audio) {
-      audio = new Audio()
-      audio.preload = 'auto'
-      audio.addEventListener('playing', () => { setTtsBusy(false); consecFails = 0 })
-      audio.addEventListener('waiting', () => setTtsBusy(true))
-      audio.addEventListener('ended', () => {
-        if (!wantPlay) return
-        // 播完自动接下一句；本章播完连播下一章（切章由下面的 createEffect 接管续播）
-        if (ttsIdx() + 1 < sentences().length) void playSentence(ttsIdx() + 1)
-        else if (idx() >= 0 && idx() < chapters().length - 1) next()
-        else { setWant(false); setTtsBusy(false); setTtsIdx(-1) }
-      })
-      audio.addEventListener('error', () => {
-        setTtsBusy(false)
-        if (wantPlay) skipBadSentence(ttsIdx()) // 播放失败也跳过，不卡住
-        else setWant(false)
-      })
-    }
-    return audio
+  const ensureCtx = (): AudioContext => {
+    if (!actx) actx = new AudioContext()
+    return actx
+  }
+
+  // 取第 i 句并解码为 AudioBuffer（blob 走 audioCache；解码结果不缓存——
+  // 解码只要几十 ms，缓存整章 PCM 会占上百 MB 内存，移动端吃不消）
+  const getBuffer = async (i: number): Promise<AudioBuffer> => {
+    const blob = await getAudio(i)
+    return ensureCtx().decodeAudioData(await blob.arrayBuffer())
+  }
+
+  // 停掉源并不触发其 onended（只有自然播完才走接续逻辑）
+  const killSrc = (s: AudioBufferSourceNode | undefined) => {
+    if (!s) return
+    s.onended = null
+    try { s.stop() } catch { /* 未 start 或已播完 */ }
+    s.disconnect()
+  }
+
+  const killPlayback = () => {
+    killSrc(curSrc)
+    killSrc(nextSrc)
+    curSrc = undefined
+    nextSrc = undefined
+    nextIdx = -1
+    nextKey = ''
+  }
+
+  // 在 at 时刻开播第 i 句（解码已完成，启动无管线开销；倍速已在音频生成时生效）
+  const startBuffer = (buf: AudioBuffer, i: number, key: string, at: number) => {
+    const ctx = ensureCtx()
+    const src = ctx.createBufferSource()
+    src.buffer = buf
+    src.connect(ctx.destination)
+    src.onended = () => onSrcEnded(src, i, key)
+    src.start(at)
+    curSrc = src
+    curEndAt = at + buf.duration
+    setTtsBusy(false)
+    consecFails = 0
+    armNext(i + 1)
+  }
+
+  // 预调度第 i 句在当前句结束时刻开播：句间采样级无缝。只提前解码一句（内存可控）
+  const armNext = (i: number) => {
+    killSrc(nextSrc)
+    nextSrc = undefined
+    nextIdx = -1
+    if (i >= sentences().length) return
+    const key = playKey()
+    const gen = playGen
+    const endAt = curEndAt
+    getBuffer(i).then((buf) => {
+      // 等待期间已跳句/暂停/切章/换音色/换倍速/当前句被换掉：预调度作废
+      if (gen !== playGen || key !== playKey() || !actx || !curSrc || curEndAt !== endAt) return
+      const src = actx.createBufferSource()
+      src.buffer = buf
+      src.connect(actx.destination)
+      src.onended = () => onSrcEnded(src, i, key)
+      // 解码慢于当前句剩余时长时退化为立即开播（留小缝隙，避免与当前句叠音）
+      const at = Math.max(endAt, actx.currentTime)
+      src.start(at)
+      nextSrc = src
+      nextEndAt = at + buf.duration
+      nextIdx = i
+      nextKey = key
+    }).catch(() => {})
+  }
+
+  // 句播完：下一句已预调度则记账接管（它已在无缝播放），否则回退现排（解码很快，缝隙极小）；
+  // 本章播完连播下一章（切章由下面的 createEffect 接管续播）
+  const onSrcEnded = (src: AudioBufferSourceNode, i: number, key: string) => {
+    if (src !== curSrc) return // 只处理当前句的自然播完（killSrc 已摘除主动停止的回调）
+    if (!wantPlay || key !== playKey()) return
+    if (nextSrc && nextIdx === i + 1 && nextKey === key) {
+      curSrc = nextSrc
+      curEndAt = nextEndAt
+      nextSrc = undefined
+      nextIdx = -1
+      nextKey = ''
+      playedKey = key
+      setTtsIdx(i + 1)
+      armNext(i + 2)
+    } else if (i + 1 < sentences().length) void playSentence(i + 1)
+    else if (idx() >= 0 && idx() < chapters().length - 1) next()
+    else { setWant(false); setTtsBusy(false); setTtsIdx(-1) }
   }
 
   // 合成/播放失败：跳到下一句（连续失败 5 句才停止，防死循环）
@@ -302,27 +379,19 @@ export default function ReaderPage() {
     setTtsIdx(i)
     setTtsBusy(true)
     playedKey = key
-    let blob: Blob
+    let buf: AudioBuffer
     try {
-      blob = await getAudio(i)
+      buf = await getBuffer(i)
     } catch {
-      skipBadSentence(i) // 合成失败：跳句
+      skipBadSentence(i) // 合成/解码失败：跳句
       return
     }
     // 等待合成期间已切章/换音色/暂停：gen 变了说明用户已主动停掉，在途的下一句一并作废
     if (!wantPlay || gen !== playGen || playedKey !== key || ttsIdx() !== i) return
-    const a = ensureAudio()
-    if (blobUrl) URL.revokeObjectURL(blobUrl)
-    blobUrl = URL.createObjectURL(blob)
-    a.src = blobUrl
-    a.playbackRate = settings().rate
-    // play() 被新的 load/pause 打断（AbortError）说明已有更新的播放操作接管（跳句/暂停/切章），
-    // 静默忽略；其余错误（如移动端自动播放限制 NotAllowedError）才展示
-    a.play().catch((e) => {
-      if ((e as DOMException)?.name === 'AbortError') return
-      setTtsBusy(false)
-      setTtsError(String(e?.message || e))
-    })
+    const ctx = ensureCtx()
+    void ctx.resume()
+    killPlayback()
+    startBuffer(buf, i, key, ctx.currentTime)
     // 预取随后几句，减少句间停顿
     for (let j = i + 1; j < Math.min(i + 6, sentences().length); j++) getAudio(j).catch(() => {})
   }
@@ -330,6 +399,7 @@ export default function ReaderPage() {
   const playTts = () => {
     if (!chapter()) return
     if (!sentences().length) { setTtsError('本章没有可朗读的文本'); setWant(false); return }
+    void ensureCtx().resume()
     void playSentence(Math.max(ttsIdx(), 0))
     prefetchAll()
   }
@@ -340,13 +410,13 @@ export default function ReaderPage() {
       // 暂停：只有用户操作才停；递增 playGen 把在途的下一句合成/接续一并作废
       setWant(false)
       playGen++
-      audio?.pause()
+      void actx?.suspend() // 冻结时钟：在播句与预调度的下一句一起停住
     } else {
       setWant(true)
-      // 暂停在同一句中途则续播，否则从头开始
-      if (audio && playedKey === playKey() && ttsIdx() >= 0 && !audio.ended && audio.currentTime > 0) {
+      // 暂停在同一句中途则续播（时钟继续走），否则从头开始
+      if (actx?.state === 'suspended' && curSrc && playedKey === playKey() && ttsIdx() >= 0) {
         setTtsError('')
-        audio.play().catch((e) => setTtsError(String(e.message || e)))
+        void actx.resume()
       } else {
         playTts()
       }
@@ -354,19 +424,19 @@ export default function ReaderPage() {
   }
 
   // 上一句/下一句：播放中跳句重读（递增 playGen 作废当前句的在途合成与 ended 接续）；
-  // 暂停中只移动高亮位置，不自动开播
+  // 暂停中只移动高亮位置并清掉旧源，再按播放时从该句重头开始
   const skipSentence = (d: number) => {
     const total = sentences().length
     if (!total) return
     const i = Math.min(Math.max((ttsIdx() < 0 ? 0 : ttsIdx()) + d, 0), total - 1)
     consecFails = 0
+    killPlayback()
     if (wantPlay) {
       playGen++
-      audio?.pause()
+      void ensureCtx().resume()
       void playSentence(i)
       prefetchAll() // 跳句后从新位置重新向后预取（playSentence 已同步更新 ttsIdx）
     } else {
-      audio?.pause()
       setTtsIdx(i)
     }
   }
@@ -374,18 +444,20 @@ export default function ReaderPage() {
   const closeTts = () => {
     setWant(false)
     playGen++
-    audio?.pause()
+    killPlayback()
+    void actx?.suspend()
     setTtsOpen(false)
     setTtsIdx(-1)
   }
 
-  // 切章/换音色：清空本章音频缓存与朗读位置，作废在途的合成等待
+  // 切章/换音色：清空本章音频缓存与朗读位置，作废在途的合成等待与调度
   createEffect((prev: string) => {
     const key = `${params.cid}:${settings().voice}`
     if (prev && prev !== key) {
       audioCache.clear()
       prefetchGen++
       playGen++
+      killPlayback()
       setTtsIdx(-1)
       consecFails = 0
     }
@@ -394,9 +466,7 @@ export default function ReaderPage() {
 
   // 切章或换音色时，若处于播放意图则换源续播（换音色重读当前句，切章从首句开始）。
   // 等分句就绪（epub 需等渲染拆句完成）再启动，避免误报"没有可朗读文本"。
-  // ttsIdx 必须 untrack：否则 playSentence 里每次 setTtsIdx 都会重触本 effect，
-  // 同一句被重复 playSentence，两次 src 赋值互相打断 play()
-  //（移动端报 "The play() request was interrupted by a new load request"，读一句停一句）。
+  // ttsIdx 必须 untrack：否则 playSentence 里每次 setTtsIdx 都会重触本 effect，同一句被重复播放。
   createEffect(() => {
     const key = playKey()
     if (!wantPlay || !chapter() || !sentences().length) return
@@ -406,10 +476,19 @@ export default function ReaderPage() {
     })
   })
 
-  // 倍速即时生效
-  createEffect(() => {
-    if (audio) audio.playbackRate = settings().rate
-  })
+  // 换倍速：音频由后端按倍速生成（edge-tts 保调变速），本章音频缓存全部失效。
+  // 保持当前位置不重置 ttsIdx——续播 effect 的 playKey 含倍速，会自动重读当前句
+  createEffect((prev: number) => {
+    const r = settings().rate
+    if (prev && prev !== r) {
+      audioCache.clear()
+      prefetchGen++
+      playGen++
+      killPlayback()
+      consecFails = 0
+    }
+    return r
+  }, 0)
 
   // 朗读句自动滚动到视野中部
   createEffect(() => {
@@ -491,7 +570,9 @@ export default function ReaderPage() {
     window.removeEventListener('keydown', onKey)
     document.body.style.background = ''
     wantPlay = false
-    audio?.pause()
+    killPlayback()
+    void actx?.close()
+    actx = undefined
   })
 
   // 打开目录时滚动到当前章
