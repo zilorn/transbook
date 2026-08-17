@@ -1,6 +1,6 @@
 // 阅读器：全屏路由（不经侧边栏布局），桌面/移动端自适应。
-// 内容取译文优先、缺失回退原文；阅读进度与字号/主题设置存 localStorage。
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+// 内容取译文优先、缺失回退原文；阅读进度存后端，字号/主题设置存 localStorage。
+import { createEffect, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
 import { api } from './api'
 import type { Book, Chapter } from './types'
@@ -19,7 +19,6 @@ interface Progress { cid: string; y: number }
 const RATES = [0.75, 1, 1.25, 1.5, 2]
 
 const SETTINGS_KEY = 'reader-settings'
-const progressKey = (bookId: string) => `reader-progress:${bookId}`
 
 function loadSettings(): ReaderSettings {
   try {
@@ -35,10 +34,14 @@ function loadSettings(): ReaderSettings {
   }
 }
 
-function loadProgress(bookId: string): Progress | null {
+// 旧版本进度存在 localStorage，首次打开时迁移到后端后删除
+function loadLegacyProgress(bookId: string): Progress | null {
+  const key = `reader-progress:${bookId}`
   try {
-    const p = JSON.parse(localStorage.getItem(progressKey(bookId)) || '')
-    return p && typeof p.cid === 'string' ? { cid: p.cid, y: Number(p.y) || 0 } : null
+    const p = JSON.parse(localStorage.getItem(key) || '')
+    if (!p || typeof p.cid !== 'string') return null
+    localStorage.removeItem(key)
+    return { cid: p.cid, y: Number(p.y) || 0 }
   } catch {
     return null
   }
@@ -56,6 +59,12 @@ export default function ReaderPage() {
   const [tocOpen, setTocOpen] = createSignal(false)
   const [panelOpen, setPanelOpen] = createSignal(false)
   const [settings, setSettings] = createSignal<ReaderSettings>(loadSettings())
+  const [progress, setProgress] = createSignal<Progress | null>(null)
+  // 进度保存：更新本地信号 + 落后端（失败静默，下次滚动会再存）
+  const saveProgress = (cid: string, y: number) => {
+    setProgress({ cid, y })
+    void api.saveProgress(bookId, cid, y).catch(() => {})
+  }
   const [previewImg, setPreviewImg] = createSignal('')
   // ---- 听书（edge-tts，逐句连播）----
   // 前端自行分句、直接把每句文本发给后端合成：渲染的句与朗读的句天然是同一份，逐句高亮必然对齐。
@@ -186,9 +195,9 @@ export default function ReaderPage() {
       setContentCid(c.id)
       setLoading(false)
       // 恢复上次的滚动位置；新章节回顶部并记为当前进度
-      const saved = loadProgress(bookId)
+      const saved = progress()
       const y = saved && saved.cid === c.id ? saved.y : 0
-      localStorage.setItem(progressKey(bookId), JSON.stringify({ cid: c.id, y }))
+      saveProgress(c.id, y)
       requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)))
     } catch (e: any) {
       if (params.cid !== c.id) return
@@ -293,7 +302,13 @@ export default function ReaderPage() {
     blobUrl = URL.createObjectURL(blob)
     a.src = blobUrl
     a.playbackRate = settings().rate
-    a.play().catch((e) => { setTtsBusy(false); setTtsError(String(e.message || e)) })
+    // play() 被新的 load/pause 打断（AbortError）说明已有更新的播放操作接管（跳句/暂停/切章），
+    // 静默忽略；其余错误（如移动端自动播放限制 NotAllowedError）才展示
+    a.play().catch((e) => {
+      if ((e as DOMException)?.name === 'AbortError') return
+      setTtsBusy(false)
+      setTtsError(String(e?.message || e))
+    })
     // 预取随后几句，减少句间停顿
     for (let j = i + 1; j < Math.min(i + 4, sentences().length); j++) getAudio(j).catch(() => {})
   }
@@ -364,11 +379,16 @@ export default function ReaderPage() {
 
   // 切章或换音色时，若处于播放意图则换源续播（换音色重读当前句，切章从首句开始）。
   // 等分句就绪（epub 需等渲染拆句完成）再启动，避免误报"没有可朗读文本"。
+  // ttsIdx 必须 untrack：否则 playSentence 里每次 setTtsIdx 都会重触本 effect，
+  // 同一句被重复 playSentence，两次 src 赋值互相打断 play()
+  //（移动端报 "The play() request was interrupted by a new load request"，读一句停一句）。
   createEffect(() => {
     const key = playKey()
     if (!wantPlay || !chapter() || !sentences().length) return
-    if (playedKey === key && ttsIdx() >= 0) void playSentence(ttsIdx())
-    else playTts()
+    untrack(() => {
+      if (playedKey === key && ttsIdx() >= 0) void playSentence(ttsIdx())
+      else playTts()
+    })
   })
 
   // 倍速即时生效
@@ -392,14 +412,14 @@ export default function ReaderPage() {
     if (i >= 0) segEl.querySelector(`[data-si="${i}"]`)?.classList.add('tts-active')
   })
 
-  // ---- 进度记忆（滚动节流保存）----
+  // ---- 进度记忆（滚动节流保存到后端）----
   let lastSave = 0
   const onScroll = () => {
     const now = Date.now()
     if (now - lastSave < 400) return
     lastSave = now
     const c = chapter()
-    if (c) localStorage.setItem(progressKey(bookId), JSON.stringify({ cid: c.id, y: window.scrollY }))
+    if (c) saveProgress(c.id, window.scrollY)
   }
 
   const goChapter = (i: number) => {
@@ -424,7 +444,17 @@ export default function ReaderPage() {
       .then((v) => { setVoices(v.voices); setVoiceDefault(v.default) })
       .catch(() => {})
     try {
-      const b = await api.book(bookId)
+      const [b, saved] = await Promise.all([
+        api.book(bookId),
+        api.getProgress(bookId).catch(() => null),
+      ])
+      // 无记录时尝试迁移旧版本存在 localStorage 的进度
+      let prog: Progress | null =
+        saved && typeof saved.cid === 'string' && saved.cid
+          ? { cid: saved.cid, y: Number(saved.y) || 0 }
+          : loadLegacyProgress(bookId)
+      setProgress(prog)
+      if (prog && !saved?.cid) void api.saveProgress(bookId, prog.cid, prog.y).catch(() => {})
       setBook(b)
       if (!b.chapters.length) {
         setError('本书还没有章节')
@@ -433,8 +463,7 @@ export default function ReaderPage() {
       }
       // 无 cid 或 cid 无效：跳到上次进度，否则第一章
       if (!params.cid || !b.chapters.some(c => c.id === params.cid)) {
-        const saved = loadProgress(bookId)
-        const target = saved && b.chapters.some(c => c.id === saved.cid) ? saved.cid : b.chapters[0].id
+        const target = prog && b.chapters.some(c => c.id === prog.cid) ? prog.cid : b.chapters[0].id
         navigate(`/books/${bookId}/read/${target}`, { replace: true })
       }
     } catch (e: any) {

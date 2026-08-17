@@ -13,6 +13,7 @@ DATA_DIR = BASE_DIR / "data"
 BOOKS_DIR = DATA_DIR / "books"
 CONFIG_PATH = DATA_DIR / "config.json"
 QUEUE_PATH = DATA_DIR / "queue.json"
+PROGRESS_PATH = DATA_DIR / "progress.json"
 
 DEFAULT_CONFIG = {
     "api_key": "",
@@ -110,6 +111,31 @@ def dequeue_book(book_id: str) -> list[dict]:
     q = [e for e in load_queue() if e["book_id"] != book_id]
     save_queue(q)
     return q
+
+
+# ---------- 阅读进度 ----------
+
+def get_read_progress(book_id: str) -> dict | None:
+    p = _read_json(PROGRESS_PATH, {})
+    if not isinstance(p, dict):
+        return None
+    e = p.get(book_id)
+    if not isinstance(e, dict) or not isinstance(e.get("cid"), str):
+        return None
+    try:
+        y = max(0.0, float(e.get("y") or 0))
+    except (TypeError, ValueError):
+        y = 0.0
+    return {"cid": e["cid"], "y": y}
+
+
+def save_read_progress(book_id: str, cid: str, y: float) -> None:
+    with _lock:
+        p = _read_json(PROGRESS_PATH, {})
+        if not isinstance(p, dict):
+            p = {}
+        p[book_id] = {"cid": cid, "y": max(0.0, float(y))}
+        _write_json(PROGRESS_PATH, p)
 
 
 # ---------- 书籍 ----------

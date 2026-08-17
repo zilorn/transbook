@@ -268,6 +268,30 @@ def delete_book(book_id: str):
     return {"ok": True}
 
 
+class ProgressIn(BaseModel):
+    cid: str
+    y: float = 0
+
+
+@app.get("/api/books/{book_id}/progress")
+def get_read_progress(book_id: str):
+    """阅读进度：{cid, y}，无记录时 cid 为 null。"""
+    if not store.load_book(book_id):
+        raise HTTPException(404, "书籍不存在")
+    return store.get_read_progress(book_id) or {"cid": None, "y": 0}
+
+
+@app.put("/api/books/{book_id}/progress")
+def put_read_progress(book_id: str, body: ProgressIn):
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    if not any(c["id"] == body.cid for c in book.get("chapters", [])):
+        raise HTTPException(404, "章节不存在")
+    store.save_read_progress(book_id, body.cid, body.y)
+    return {"ok": True}
+
+
 class NoTranslateIn(BaseModel):
     no_translate: bool
 

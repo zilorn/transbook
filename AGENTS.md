@@ -122,8 +122,10 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   识别，不渲染侧边栏）。内容取译文优先（`status === 'done'` 先试 `?translated=true`，
   404 回退原文）；epub 章节的 `<img>` 相对路径重写为章节图片接口（外链图保留、
   加载失败隐藏），点击可全屏预览；渲染前去掉正文首个 h1-h3（与阅读器标题栏重复）。
-  阅读进度（`reader-progress:<bookId>` = `{cid, y}`，含滚动
-  位置）与字号/主题/音色设置（`reader-settings`）存 localStorage；进入阅读页自动续读。
+  阅读进度存后端 `data/progress.json`（`{book_id: {cid, y}}`，含滚动位置，
+  `GET/PUT /api/books/{id}/progress`，滚动 400ms 节流保存），前端首次打开时把旧版
+  localStorage（`reader-progress:<bookId>`）迁移到后端；字号/主题/音色设置
+  （`reader-settings`）仍存 localStorage；进入阅读页自动续读。
   主题（白纸/护眼/夜间）整页换背景，工具栏按钮与音色下拉用 `.reader-bar` 继承主题色。
 - **听书（edge-tts，逐句）**：**前端自行分句、直接把每句文本发给后端合成**——渲染的句
   与朗读的句天然是同一份，逐句高亮必然对齐，后端不参与分句/对齐。`POST /api/tts/speak`
@@ -143,6 +145,10 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   当前章节，否则切章后内容未加载完时会拿上一章的句子接着读。播放/暂停按钮只随播放意图
   （`wantPlay`/`setWant`）变化——句间换 audio.src 触发的 pause/playing 事件不再驱动图标；
   暂停/关闭/切章时递增 `playGen`，在途的下一句合成等待被作废（句间隙暂停也能立刻停住）。
+  切章/换音色续播的 effect 里 `ttsIdx` 必须 `untrack` 读取——否则 `playSentence` 的
+  `setTtsIdx` 会重触 effect，同一句被重复 `playSentence`，两次 src 赋值互相打断 `play()`
+  （移动端报 "The play() request was interrupted by a new load request"，读一句停一句）；
+  `play().catch` 对 AbortError（被新 load/pause 打断）静默忽略。
   播放控件是右下悬浮球（SVG 播放/暂停图标）+ 上方悬浮卡片（进度/上一句/下一句/倍速/音色/关闭），
   上一句/下一句（`skipSentence`）播放中跳句重读（递增 `playGen` 作废在途合成），暂停中只移动高亮位置；
   浮起避开手机底部导航栏遮挡，不再是贴底通栏。
@@ -192,6 +198,7 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - `POST /api/books/{id}/title/retranslate` — 重翻书名（不动章节）
 - `POST /api/books/{id}/toc/retranslate` — 重翻目录（全部章节标题；epub 已译章节的 HTML 标题元素同步更新）
 - `GET /api/books/{id}/export?fmt=txt|epub` — 导出
+- `GET/PUT /api/books/{id}/progress` — 阅读进度（body: `{cid, y}`；存 `data/progress.json`）
 - `GET /api/tts/voices` — 听书音色列表（含 default）
 - `POST /api/tts/speak` — 任意文本语音 mp3（body: `{text, voice}`；前端分句后直接发句文本，
   按 音色+文本 哈希全局缓存，命中直接返回文件）

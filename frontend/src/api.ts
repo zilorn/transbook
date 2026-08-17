@@ -116,6 +116,14 @@ export const api = {
     req(`/api/books/${id}/toc/retranslate`, { method: 'POST' }),
   chapterContent: (id: string, cid: string, translated = false): Promise<string> =>
     reqText(`/api/books/${id}/chapters/${cid}/content${translated ? '?translated=true' : ''}`),
+  getProgress: (id: string): Promise<{ cid: string | null; y: number }> =>
+    req(`/api/books/${id}/progress`),
+  saveProgress: (id: string, cid: string, y: number): Promise<{ ok: boolean }> =>
+    req(`/api/books/${id}/progress`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cid, y }),
+    }),
   ttsVoices: (): Promise<{ voices: Record<string, string>; default: string }> =>
     req('/api/tts/voices'),
   ttsSpeak: (text: string, voice: string): Promise<Blob> =>
