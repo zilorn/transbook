@@ -3,7 +3,7 @@
 import { createEffect, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
 import { api } from './api'
-import type { Book, Chapter } from './types'
+import type { Book, Bookmark, Chapter } from './types'
 
 type ThemeKey = 'light' | 'sepia' | 'night'
 interface Theme { name: string; bg: string; text: string; line: string }
@@ -57,6 +57,7 @@ export default function ReaderPage() {
   const [loading, setLoading] = createSignal(true)
   const [error, setError] = createSignal('')
   const [tocOpen, setTocOpen] = createSignal(false)
+  const [tocTab, setTocTab] = createSignal<'toc' | 'bm'>('toc') // 目录抽屉：章节 / 书签
   const [panelOpen, setPanelOpen] = createSignal(false)
   const [settings, setSettings] = createSignal<ReaderSettings>(loadSettings())
   const [progress, setProgress] = createSignal<Progress | null>(null)
@@ -181,6 +182,121 @@ export default function ReaderPage() {
   const chapter = () => (idx() >= 0 ? chapters()[idx()] : null)
   const theme = () => THEMES[settings().theme]
 
+  // ---- 书签（选中文本添加；句子级定位，书签句显示橙色下划线）----
+  const bookmarks = (): Bookmark[] => book()?.bookmarks ?? []
+  // 当前章节被书签覆盖的句号集合
+  const bmSis = (): Set<number> =>
+    new Set(bookmarks().filter(b => b.cid === params.cid).flatMap(b => b.sis))
+  const delBookmark = (bm: Bookmark) => {
+    setBook(prev => prev && { ...prev, bookmarks: (prev.bookmarks ?? []).filter(x => x.id !== bm.id) })
+    void api.removeBookmark(bookId, bm.id).catch(() => {})
+  }
+
+  // ---- 文本选取（自定义工具条：复制/书签/朗读；屏蔽原生 callout 与右键菜单）----
+  let contentRef: HTMLDivElement | undefined
+  const [selMenu, setSelMenu] = createSignal<{ x: number; y: number; above: boolean } | null>(null)
+  let selTimer: ReturnType<typeof setTimeout> | undefined
+  const onSelChange = () => {
+    clearTimeout(selTimer)
+    selTimer = setTimeout(() => {
+      const sel = window.getSelection()
+      const root = contentRef
+      if (!sel || sel.isCollapsed || !root || !sel.toString().trim()) { setSelMenu(null); return }
+      const range = sel.getRangeAt(0)
+      if (!root.contains(range.commonAncestorContainer)) { setSelMenu(null); return }
+      const r = range.getBoundingClientRect()
+      const above = r.top > 56
+      setSelMenu({
+        x: Math.min(Math.max(r.left + r.width / 2, 96), window.innerWidth - 96),
+        y: above ? r.top - 10 : r.bottom + 10,
+        above,
+      })
+    }, 120) // 去抖：移动端拖动手柄期间持续触发，停手后才出工具条
+  }
+  const clearSel = () => { window.getSelection()?.removeAllRanges(); setSelMenu(null) }
+
+  // 选取覆盖到的可朗读句号（span[data-si]，txt/epub 渲染结构一致）
+  const coveredSis = (range: Range): number[] => {
+    const out: number[] = []
+    for (const el of contentRef?.querySelectorAll<HTMLElement>('span[data-si]') ?? []) {
+      try { if (range.intersectsNode(el)) out.push(Number(el.dataset.si)) } catch { /* 游离节点 */ }
+    }
+    return out
+  }
+
+  // 朗读起点：从选取第 1 个字符所在的句开始；是标点则顺延到下一句含文字的字符
+  // （实现：按文档序找第一个"交叠片段内含文字字符"的句 span）
+  const ttsStartSi = (range: Range): number => {
+    for (const el of contentRef?.querySelectorAll<HTMLElement>('span[data-si]') ?? []) {
+      try {
+        if (!range.intersectsNode(el)) continue
+        const r = range.cloneRange()
+        const sr = document.createRange()
+        sr.selectNodeContents(el)
+        if (r.compareBoundaryPoints(Range.START_TO_START, sr) < 0) r.setStart(sr.startContainer, sr.startOffset)
+        if (r.compareBoundaryPoints(Range.END_TO_END, sr) > 0) r.setEnd(sr.endContainer, sr.endOffset)
+        if (/[\p{L}\p{N}]/u.test(r.toString())) return Number(el.dataset.si)
+      } catch { /* 游离节点 */ }
+    }
+    return -1
+  }
+
+  const copySel = async () => {
+    const text = window.getSelection()?.toString() || ''
+    if (!text) return
+    try { await navigator.clipboard.writeText(text) } catch { document.execCommand('copy') }
+    clearSel()
+  }
+
+  const bookmarkSel = async () => {
+    const sel = window.getSelection()
+    const c = chapter()
+    if (!sel || sel.isCollapsed || !c) return
+    const sis = coveredSis(sel.getRangeAt(0))
+    const text = sel.toString().trim()
+    clearSel()
+    if (!sis.length || !text) return
+    try {
+      const bm = await api.addBookmark(bookId, { cid: c.id, sis, text })
+      setBook(prev => prev && { ...prev, bookmarks: [...(prev.bookmarks ?? []), bm] })
+    } catch { /* 失败静默：下次选取可再试 */ }
+  }
+
+  const speakSel = () => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed) return
+    const si = ttsStartSi(sel.getRangeAt(0))
+    clearSel()
+    if (si >= 0) playFrom(si)
+  }
+
+  // 从指定句开始朗读（选中文本"朗读"、书签跳转朗读共用入口）
+  const playFrom = (i: number) => {
+    if (i < 0 || i >= sentences().length) return
+    setTtsOpen(true)
+    setWant(true)
+    consecFails = 0
+    killPlayback()
+    playGen++
+    void ensureCtx().resume()
+    void playSentence(i)
+    prefetchAll()
+  }
+
+  // 书签跳转：跨页（书籍详情）经 sessionStorage 传入，页内直接滚动
+  let pendingJump: { cid: string; si: number } | null = null
+  const jumpBookmark = (bm: Bookmark) => {
+    setTocOpen(false)
+    const si = bm.sis[0] ?? 0
+    if (params.cid === bm.cid && contentCid() === bm.cid) {
+      document.querySelector(`[data-si="${si}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      return
+    }
+    pendingJump = { cid: bm.cid, si }
+    navigate(`/books/${bookId}/read/${bm.cid}`)
+  }
+
+
   createEffect(() => {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings()))
   })
@@ -210,7 +326,9 @@ export default function ReaderPage() {
       const saved = progress()
       const y = saved && saved.cid === c.id ? saved.y : 0
       saveProgress(c.id, y)
-      requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)))
+      // 书签跳转目标章：由下面的跳转 effect 滚到书签句，不恢复旧滚动位置
+      if (!(pendingJump && pendingJump.cid === c.id))
+        requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)))
     } catch (e: any) {
       if (params.cid !== c.id) return
       setError(String(e.message || e))
@@ -525,6 +643,42 @@ export default function ReaderPage() {
     if (i >= 0) segEl.querySelector(`[data-si="${i}"]`)?.classList.add('tts-active')
   })
 
+  // epub 书签橙色下划线：内容重渲染（innerHTML）或书签增删后重刷（txt 由 classList 绑定）
+  createEffect(() => {
+    const c = chapter()
+    const marks = bmSis()
+    if (!epubSeg() || !segEl || c?.format !== 'epub') return
+    segEl.querySelectorAll('.bm-mark').forEach(el => el.classList.remove('bm-mark'))
+    for (const el of segEl.querySelectorAll<HTMLElement>('span[data-si]'))
+      if (marks.has(Number(el.dataset.si))) el.classList.add('bm-mark')
+  })
+
+  // 书签跳转：本章内容加载完成后滚到书签句。pendingJump 为页内跳转；
+  // 跨页跳转（书籍详情页）经 sessionStorage 传入（60s 内有效，消费即删）
+  createEffect(() => {
+    const cid = contentCid()
+    if (!cid) return
+    let si: number | null = null
+    if (pendingJump) {
+      if (pendingJump.cid !== cid) return
+      si = pendingJump.si
+      pendingJump = null
+    } else {
+      try {
+        const key = `reader-jump:${bookId}`
+        const j = JSON.parse(sessionStorage.getItem(key) || 'null')
+        if (!j) return
+        if (Date.now() - Number(j.ts) > 60_000) { sessionStorage.removeItem(key); return }
+        if (j.cid !== cid) return
+        sessionStorage.removeItem(key)
+        si = Number(j.si)
+      } catch { return }
+    }
+    if (si == null || Number.isNaN(si)) return
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      document.querySelector(`[data-si="${si}"]`)?.scrollIntoView({ block: 'center' })))
+  })
+
   // ---- 进度记忆（滚动节流保存到后端）----
   let lastSave = 0
   const onScroll = () => {
@@ -565,6 +719,7 @@ export default function ReaderPage() {
     window.addEventListener('wheel', onUserScroll, { passive: true })
     window.addEventListener('touchmove', onUserScroll, { passive: true })
     window.addEventListener('keydown', onKey)
+    document.addEventListener('selectionchange', onSelChange)
     void api.ttsVoices()
       .then((v) => { setVoices(v.voices); setVoiceDefault(v.default) })
       .catch(() => {})
@@ -601,6 +756,8 @@ export default function ReaderPage() {
     window.removeEventListener('wheel', onUserScroll)
     window.removeEventListener('touchmove', onUserScroll)
     window.removeEventListener('keydown', onKey)
+    document.removeEventListener('selectionchange', onSelChange)
+    clearTimeout(selTimer)
     document.body.style.background = ''
     wantPlay = false
     killPlayback()
@@ -659,8 +816,10 @@ export default function ReaderPage() {
         </div>
       </div>
 
-      {/* 正文 */}
-      <div class="max-w-[800px] mx-auto px-4 md:px-6 pt-5"
+      {/* 正文：自定义文本选取工具条，屏蔽原生右键菜单/长按 callout */}
+      <div class="max-w-[800px] mx-auto px-4 md:px-6 pt-5 [-webkit-touch-callout:none]"
+        ref={(el) => { contentRef = el }}
+        onContextMenu={(e) => e.preventDefault()}
         style={{ 'padding-bottom': ttsOpen() ? (ttsCtlOpen() ? '180px' : '100px') : '32px' }}>
         <Show when={!loading()} fallback={<p class="text-center py-[60px] opacity-60">加载中…</p>}>
           <Show when={!error()} fallback={
@@ -684,7 +843,7 @@ export default function ReaderPage() {
                       style={{ 'font-size': `${settings().fontSize}px`, 'line-height': 1.9 }}>
                       <For each={segments()}>{(seg) => seg.si < 0 ? seg.t : (
                         <span data-si={seg.si} class="px-[1px]"
-                          classList={{ 'tts-active': seg.si === ttsIdx() }}>
+                          classList={{ 'tts-active': seg.si === ttsIdx(), 'bm-mark': bmSis().has(seg.si) }}>
                           {seg.t}
                         </span>
                       )}</For>
@@ -854,28 +1013,83 @@ export default function ReaderPage() {
         </div>
       </Show>
 
-      {/* 目录抽屉：移动端全屏，桌面右侧 360px */}
+      {/* 文本选取工具条：复制 / 书签 / 朗读。pointerdown 阻止默认行为，
+          避免点按钮前选区被浏览器清掉 */}
+      <Show when={selMenu()}>
+        {(m) => (
+          <div class="reader-bar fixed z-30 flex gap-1 rounded-[8px] border shadow-lg p-1 select-none"
+            style={{
+              left: `${m().x}px`, top: `${m().y}px`,
+              transform: m().above ? 'translate(-50%, -100%)' : 'translate(-50%, 0)',
+              background: theme().bg, 'border-color': theme().line,
+            }}
+            onPointerDown={(e) => e.preventDefault()}>
+            <button class="small border-0" onClick={copySel}>复制</button>
+            <button class="small border-0" onClick={() => void bookmarkSel()}>书签</button>
+            <button class="small border-0" onClick={speakSel}>朗读</button>
+          </div>
+        )}
+      </Show>
+
+      {/* 目录抽屉：移动端全屏，桌面右侧 360px；含章节 / 书签两个页签 */}
       <Show when={tocOpen()}>
         <div class="fixed inset-0 z-20 bg-black/40" onClick={() => setTocOpen(false)}>
           <div ref={tocRef}
             class="reader-bar absolute right-0 top-0 h-full w-full md:w-[360px] overflow-y-auto border-l"
             style={{ background: theme().bg, 'border-color': theme().line }}
             onClick={(e) => e.stopPropagation()}>
-            <div class="sticky top-0 z-10 flex items-center justify-between px-4 h-[48px] border-b"
+            <div class="sticky top-0 z-10 flex items-center gap-1 px-2 h-[48px] border-b"
               style={{ background: theme().bg, 'border-color': theme().line }}>
-              <span class="font-bold text-[15px]">目录（{chapters().length}）</span>
+              <button class={`small ${tocTab() === 'toc' ? 'primary' : 'border-0'}`}
+                onClick={() => setTocTab('toc')}>
+                目录（{chapters().length}）
+              </button>
+              <button class={`small ${tocTab() === 'bm' ? 'primary' : 'border-0'}`}
+                onClick={() => setTocTab('bm')}>
+                书签（{bookmarks().length}）
+              </button>
+              <div class="flex-1" />
               <button class="small" onClick={() => setTocOpen(false)}>关闭</button>
             </div>
-            <For each={chapters()}>
-              {(c, i) => (
-                <button data-active={c.id === params.cid}
-                  class="block w-full text-left border-0 rounded-none bg-transparent px-4 py-[10px] text-[14px] truncate"
-                  style={c.id === params.cid ? { color: '#2563eb', 'font-weight': 600 } : {}}
-                  onClick={() => goChapter(i())}>
-                  {i() + 1}. {c.title_translated || c.title}
-                </button>
-              )}
-            </For>
+            <Show when={tocTab() === 'toc'} fallback={
+              <>
+                <For each={bookmarks()}>
+                  {(bm) => (
+                    <div class="flex items-start gap-2 px-4 py-[10px] border-b text-[14px]"
+                      style={{ 'border-color': theme().line }}>
+                      <button class="flex-1 min-w-0 text-left border-0 bg-transparent p-0"
+                        onClick={() => jumpBookmark(bm)}>
+                        <div class="line-clamp-2 break-all underline decoration-[#f59e0b] decoration-2 underline-offset-4">
+                          {bm.text}
+                        </div>
+                        <div class="text-[12px] opacity-50 mt-1 truncate">
+                          {chapters().find(c => c.id === bm.cid)?.title_translated
+                            || chapters().find(c => c.id === bm.cid)?.title || '章节已删除'}
+                        </div>
+                      </button>
+                      <button class="small shrink-0" title="删除书签"
+                        onClick={() => delBookmark(bm)}>删</button>
+                    </div>
+                  )}
+                </For>
+                <Show when={!bookmarks().length}>
+                  <p class="text-center py-[40px] text-[13px] opacity-50">
+                    还没有书签，在阅读页选中文本即可添加。
+                  </p>
+                </Show>
+              </>
+            }>
+              <For each={chapters()}>
+                {(c, i) => (
+                  <button data-active={c.id === params.cid}
+                    class="block w-full text-left border-0 rounded-none bg-transparent px-4 py-[10px] text-[14px] truncate"
+                    style={c.id === params.cid ? { color: '#2563eb', 'font-weight': 600 } : {}}
+                    onClick={() => goChapter(i())}>
+                    {i() + 1}. {c.title_translated || c.title}
+                  </button>
+                )}
+              </For>
+            </Show>
           </div>
         </div>
       </Show>

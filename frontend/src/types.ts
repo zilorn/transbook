@@ -69,6 +69,15 @@ export interface GlossaryTerm {
   note?: string
 }
 
+// 阅读器书签：cid + 句号列表定位（si 为章节内朗读句下标），text 为选中时的文本快照
+export interface Bookmark {
+  id: string
+  cid: string
+  sis: number[]
+  text: string
+  created_at: number
+}
+
 // GET /api/books/{id} / POST /api/books 的整书结构
 export interface Book {
   id: string
@@ -86,6 +95,8 @@ export interface Book {
   source?: BookSource | null
   // 无需翻译标记：仅托管（阅读/导出/WebDAV），不参与翻译
   no_translate?: boolean
+  // 阅读器书签（旧数据没有该字段）
+  bookmarks?: Bookmark[]
 }
 
 // 追加章节时提交的条目

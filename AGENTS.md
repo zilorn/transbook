@@ -129,6 +129,16 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   所有图标均为 SVG（上一句/下一句不用 emoji），
   上一句/下一句（`skipSentence`）播放中跳句重读（递增 `playGen` 作废在途合成），暂停中只移动高亮位置；
   浮起避开手机底部导航栏遮挡，不再是贴底通栏。
+- **书签/文本选取（阅读器）**：监听 `selectionchange`（去抖 120ms，移动端拖动句柄停手后才出条）
+  在选区上方弹自定义工具条（复制/书签/朗读），工具条 `pointerdown` preventDefault 防点按钮前选区被清；
+  正文容器 `[-webkit-touch-callout:none]` + `contextmenu` preventDefault 屏蔽原生 callout/右键菜单
+  （Android Chrome 选中后的系统浮动菜单无法用 Web API 完全屏蔽）。书签存 `book.json` 的
+  `bookmarks`（`{id, cid, sis[], text, created_at}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
+  重译后下标可能漂移，`text` 是添加时的文本快照）；书签句加 `.bm-mark` 橙色下划线（txt 走 Solid
+  classList，epub 走 effect 切类，与 `.tts-active` 同套路）。朗读起点取选区内第一个含文字
+  （`\p{L}\p{N}`）字符所在的句（首字符是标点则顺延）。书签查看/删除：目录抽屉「书签」页签 +
+  书籍详情页「书签」标签页；跳转页内直接 `scrollIntoView`，跨页经 sessionStorage
+  `reader-jump:<bookId>`（60s 内有效，消费即删），跳转到目标章时不恢复旧滚动位置。
 - **界面中文化**：搜索/排行榜返回的 `status`（已完结/连载中/短篇）、`genre`、筛选项
   显示名一律后端出中文（`syosetu._GENRE_TEXT_ZH`、`kakuyomu.GENRES` 值），前端不做映射。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，

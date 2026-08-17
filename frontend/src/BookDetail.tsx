@@ -1,7 +1,7 @@
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
 import { api } from './api'
-import type { Book, Chapter, ChapterPreview, GlossaryTerm } from './types'
+import type { Book, Bookmark, Chapter, ChapterPreview, GlossaryTerm } from './types'
 
 const CH_STATUS: Record<string, string> = { pending: '待翻译', translating: '翻译中', done: '已完成', error: '失败' }
 
@@ -228,6 +228,19 @@ export default function BookDetail() {
 
   const doneCount = () => (book()?.chapters || []).filter(c => c.status === 'done').length
 
+  // ---- 书签（阅读器选中文本添加）----
+  const bookmarks = (): Bookmark[] => book()?.bookmarks ?? []
+  const bmChapterTitle = (cid: string) => {
+    const c = book()?.chapters.find(x => x.id === cid)
+    return c ? (c.title_translated || c.title) : '章节已删除'
+  }
+  // 跳转阅读器对应章节的书签句：经 sessionStorage 把句号带给阅读器（60s 内有效）
+  const jumpBookmark = (bm: Bookmark) => {
+    sessionStorage.setItem(`reader-jump:${bookId}`,
+      JSON.stringify({ cid: bm.cid, si: bm.sis[0] ?? 0, ts: Date.now() }))
+    navigate(`/books/${bookId}/read/${bm.cid}`)
+  }
+
   // ---- 来源站点增量更新（仅抓新章节）----
   const [updating, setUpdating] = createSignal(false)
   const updateFromSource = async () => {
@@ -376,11 +389,42 @@ export default function BookDetail() {
                 术语表（{glossary().length}）{glossaryDirty() ? ' *' : ''}
               </button>
             </Show>
+            <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'bookmarks' ? 'border-b-2 border-primary text-primary' : ''}`}
+              onClick={() => setTab('bookmarks')}>
+              书签（{bookmarks().length}）
+            </button>
             <button class={`border-0 bg-transparent rounded-none px-[14px] py-2 ${tab() === 'add' ? 'border-b-2 border-primary text-primary' : ''}`}
               onClick={() => setTab('add')}>
               追加章节
             </button>
           </div>
+
+          <Show when={tab() === 'bookmarks'}>
+            <div class="border border-line rounded-[6px] overflow-hidden">
+              <For each={bookmarks()}>
+                {(bm) => (
+                  <div class="flex items-start gap-3 px-3 py-2.5 border-b border-line last:border-b-0">
+                    <button class="link p-0 flex-1 min-w-0 text-left" title="跳转到阅读器对应位置"
+                      onClick={() => jumpBookmark(bm)}>
+                      <div class="text-[14px] text-text line-clamp-2 break-all underline decoration-[#f59e0b] decoration-2 underline-offset-4">
+                        {bm.text}
+                      </div>
+                      <div class="text-muted text-[12px] mt-1 truncate">
+                        {bmChapterTitle(bm.cid)} · {new Date(bm.created_at * 1000).toLocaleString()}
+                      </div>
+                    </button>
+                    <button class="small danger shrink-0" disabled={busy()}
+                      onClick={() => act(() => api.removeBookmark(bookId, bm.id), '书签已删除')}>
+                      删除
+                    </button>
+                  </div>
+                )}
+              </For>
+              <Show when={!bookmarks().length}>
+                <p class="text-muted text-center py-[30px]">书签为空，在阅读器中选中文本即可添加。</p>
+              </Show>
+            </div>
+          </Show>
 
           <Show when={tab() === 'chapters'}>
             <div class="flex gap-2.5 mb-2.5 items-center">

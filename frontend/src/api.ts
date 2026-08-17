@@ -1,5 +1,6 @@
 import type {
   Book,
+  Bookmark,
   BookSummary,
   ChapterPreviewResult,
   Config,
@@ -124,6 +125,14 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cid, y }),
     }),
+  addBookmark: (id: string, bm: { cid: string; sis: number[]; text: string }): Promise<Bookmark> =>
+    req(`/api/books/${id}/bookmarks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(bm),
+    }),
+  removeBookmark: (id: string, bmId: string): Promise<{ ok: boolean }> =>
+    req(`/api/books/${id}/bookmarks/${bmId}`, { method: 'DELETE' }),
   ttsVoices: (): Promise<{ voices: Record<string, string>; default: string }> =>
     req('/api/tts/voices'),
   ttsSpeak: (text: string, voice: string, rate: number): Promise<Blob> =>

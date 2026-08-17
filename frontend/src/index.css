@@ -115,6 +115,14 @@
     transition: background 0.2s;
   }
 
+  /* 书签句：橙色下划线 */
+  .bm-mark {
+    text-decoration: underline;
+    text-decoration-color: #f59e0b;
+    text-decoration-thickness: 2px;
+    text-underline-offset: 4px;
+  }
+
   /* 阅读器工具栏/目录内的按钮跟随阅读主题色，不用默认白底 */
   .reader-bar button {
     background: transparent;

@@ -260,6 +260,7 @@ def get_book(book_id: str):
     if not book:
         raise HTTPException(404, "书籍不存在")
     book["running"] = translator.is_running(book_id)
+    book.setdefault("bookmarks", [])
     return book
 
 
@@ -294,6 +295,46 @@ def put_read_progress(book_id: str, body: ProgressIn):
     if not any(c["id"] == body.cid for c in book.get("chapters", [])):
         raise HTTPException(404, "章节不存在")
     store.save_read_progress(book_id, body.cid, body.y)
+    return {"ok": True}
+
+
+# ---------- 书签（阅读器选中文本添加，句子级定位：cid + 句号列表）----------
+
+class BookmarkIn(BaseModel):
+    cid: str
+    sis: list[int]
+    text: str
+
+
+@app.post("/api/books/{book_id}/bookmarks")
+def add_bookmark(book_id: str, body: BookmarkIn):
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    if not any(c["id"] == body.cid for c in book.get("chapters", [])):
+        raise HTTPException(404, "章节不存在")
+    sis = sorted({s for s in body.sis if isinstance(s, int) and s >= 0})
+    text = body.text.strip()[:500]
+    if not sis or not text:
+        raise HTTPException(400, "书签内容为空")
+    bm = {"id": store.new_book_id()[:8], "cid": body.cid, "sis": sis,
+          "text": text, "created_at": store.now()}
+    book.setdefault("bookmarks", []).append(bm)
+    store.save_book(book)
+    return bm
+
+
+@app.delete("/api/books/{book_id}/bookmarks/{bm_id}")
+def delete_bookmark(book_id: str, bm_id: str):
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    bms = book.get("bookmarks") or []
+    kept = [b for b in bms if b.get("id") != bm_id]
+    if len(kept) == len(bms):
+        raise HTTPException(404, "书签不存在")
+    book["bookmarks"] = kept
+    store.save_book(book)
     return {"ok": True}
 
 
