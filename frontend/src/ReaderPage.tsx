@@ -398,11 +398,26 @@ export default function ReaderPage() {
     for (let j = i + 1; j < Math.min(i + 6, sentences().length); j++) getAudio(j).catch(() => {})
   }
 
-  const playTts = () => {
+  // 视口内第一个可朗读句的下标（sticky 顶栏高 48px，留少量余量）：
+  // 全新开播时若用户已滚动阅读过，从当前页面第一行开始读而不是从头。
+  // 全部滚过（停在章末导航栏）则取最后一句；找不到任何句时回退 0。
+  const firstVisibleIdx = (): number => {
+    let last = -1
+    for (const el of document.querySelectorAll<HTMLElement>('[data-si]')) {
+      if (el.getBoundingClientRect().bottom > 56) return Number(el.dataset.si)
+      last = Number(el.dataset.si)
+    }
+    return Math.max(last, 0)
+  }
+
+  // fromVisible 仅用于用户主动点播放按钮的全新开播；章末连播切章由续播 effect
+  // 调 playTts()，那时滚动位置还没恢复（仍是上一章的），不能按可见句定位。
+  const playTts = (fromVisible = false) => {
     if (!chapter()) return
     if (!sentences().length) { setTtsError('本章没有可朗读的文本'); setWant(false); return }
     void ensureCtx().resume()
-    void playSentence(Math.max(ttsIdx(), 0))
+    const start = ttsIdx() >= 0 ? ttsIdx() : fromVisible ? firstVisibleIdx() : 0
+    void playSentence(start)
     prefetchAll()
   }
 
@@ -420,7 +435,7 @@ export default function ReaderPage() {
         setTtsError('')
         void actx.resume()
       } else {
-        playTts()
+        playTts(true) // 全新开播：从当前视口第一行起读（未滚动时即首句）
       }
     }
   }
