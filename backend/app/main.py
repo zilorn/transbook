@@ -310,16 +310,6 @@ def tts_voices():
     return {"voices": tts.VOICES, "default": tts.DEFAULT_VOICE}
 
 
-def _find_chapter(book_id: str, chapter_id: str) -> dict:
-    book = store.load_book(book_id)
-    if not book:
-        raise HTTPException(404, "书籍不存在")
-    chapter = next((c for c in book["chapters"] if c["id"] == chapter_id), None)
-    if not chapter:
-        raise HTTPException(404, "章节不存在")
-    return chapter
-
-
 def _check_voice(voice: str) -> str:
     voice = voice or tts.DEFAULT_VOICE
     if voice not in tts.VOICES:
@@ -327,22 +317,17 @@ def _check_voice(voice: str) -> str:
     return voice
 
 
-@app.get("/api/books/{book_id}/chapters/{chapter_id}/tts/sentences")
-def tts_sentences(book_id: str, chapter_id: str, translated: bool = False):
-    """章节朗读分句清单：前端据此逐句连播并对齐高亮（分段规则与前端一致）。"""
-    chapter = _find_chapter(book_id, chapter_id)
-    return {"sentences": tts.split_sentences(tts.chapter_text(book_id, chapter, translated))}
+class TtsSpeakReq(BaseModel):
+    text: str
+    voice: str = ""
 
 
-@app.get("/api/books/{book_id}/chapters/{chapter_id}/tts/sentence")
-async def tts_sentence(book_id: str, chapter_id: str, idx: int = Query(...),
-                       translated: bool = False, voice: str = ""):
-    """单句语音（mp3）。命中缓存直接返回文件；否则合成后落盘缓存再返回。"""
-    chapter = _find_chapter(book_id, chapter_id)
-    voice = _check_voice(voice)
+@app.post("/api/tts/speak")
+async def tts_speak(req: TtsSpeakReq):
+    """任意文本语音（mp3）：前端自行分句后直接发句文本合成，按 音色+文本 哈希全局缓存。"""
+    voice = _check_voice(req.voice)
     try:
-        path = await asyncio.wait_for(
-            tts.synthesize_sentence(book_id, chapter, translated, voice, idx), timeout=60)
+        path = await asyncio.wait_for(tts.synthesize_text(req.text, voice), timeout=60)
     except ValueError as e:
         raise HTTPException(400, str(e))
     except TimeoutError:

@@ -307,30 +307,7 @@ export default function BookDetail() {
           </div>
 
           <div class="flex flex-col gap-2.5 my-4 items-start">
-            <Show when={!b().no_translate}>
-              {/* 翻译操作：方框按钮紧贴成组，单独一行 */}
-              <div class="flex items-center flex-wrap gap-y-2">
-                <div class="flex">
-                  <button class="primary rounded-r-none" disabled={busy() || b().running}
-                    onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
-                    {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
-                  </button>
-                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
-                    onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
-                    排队全部重译
-                  </button>
-                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
-                    onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
-                    生成术语表
-                  </button>
-                  <button class="rounded-l-none -ml-px" disabled={busy() || b().running}
-                    onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
-                    重翻目录
-                  </button>
-                </div>
-                <button class="link ml-2.5" onClick={() => navigate('/queue')}>前往翻译队列 →</button>
-              </div>
-            </Show>
+            {/* 阅读是最高频操作，放第一排 */}
             <div class="flex gap-2.5 items-center flex-wrap">
               <button class="primary" disabled={b().chapters.length === 0}
                 title="进入阅读器（自动续读上次位置）"
@@ -353,6 +330,29 @@ export default function BookDetail() {
                 {b().no_translate ? '取消「无需翻译」' : '标记为无需翻译'}
               </button>
             </div>
+            <Show when={!b().no_translate}>
+              {/* 翻译操作：方框按钮紧贴成组，单独一行 */}
+              <div class="flex items-center flex-wrap gap-y-2">
+                <div class="flex">
+                  <button class="primary rounded-r-none" disabled={busy() || b().running}
+                    onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
+                    {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
+                  </button>
+                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
+                    onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
+                    排队全部重译
+                  </button>
+                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
+                    onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
+                    生成术语表
+                  </button>
+                  <button class="rounded-l-none -ml-px" disabled={busy() || b().running}
+                    onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
+                    重翻目录
+                  </button>
+                </div>
+              </div>
+            </Show>
             {/* 导出：方框按钮紧贴成组，单独一行 */}
             <div class="flex">
               <a class="inline-block px-[14px] py-[7px] border border-line rounded-l-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"

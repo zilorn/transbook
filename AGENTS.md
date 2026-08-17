@@ -14,7 +14,7 @@
 ```
 pyproject.toml / uv.lock     # Python 依赖，uv 管理，锁定在项目根目录
 package.json / bun.lock      # JS 依赖（workspaces: frontend），锁定在项目根目录
-start.sh                     # 一键启动前后端，Ctrl+C 全部停止
+start.sh                     # 一键启动：构建前端后由 FastAPI 托管 dist，Ctrl+C 停止
 backend/
   app/
     main.py        # FastAPI 路由（配置/书籍/章节追加/术语表/翻译控制/翻译队列/导出）
@@ -22,7 +22,7 @@ backend/
     parsing.py     # txt 正则分章、epub 解析/生成、HTML 翻译单元抽取
     deepseek.py    # DeepSeek API 客户端（chat 支持按 KeyPool 条目调用）
     translator.py  # 术语表生成 + KeyPool 多 key 并发翻译流水线 + 队列执行器（asyncio）
-    tts.py         # 听书（edge-tts）：章节文本抽取、分句（SEG_RE）、逐句合成，mp3 按句缓存（books/<id>/tts/）
+    tts.py         # 听书（edge-tts）：任意文本合成，mp3 按 音色+文本 哈希全局缓存（data/tts_cache/）
     crawlers/      # 站点爬虫包（main.py 经 `from .crawlers import syosetu, kakuyomu` 使用）
       http.py      # 共享限速 HTTP 出口 HttpGate（串行 + 抖动 + 风控退避），每站点一个实例
       tasks.py     # 共享抓取任务管理 CrawlRunner（整书抓取/增量更新/进度/停止/逐章落盘）
@@ -42,7 +42,7 @@ frontend/
 ## 常用命令
 
 ```bash
-./start.sh                          # 一键启动（后端 8300，前端 5173），Ctrl+C 停止
+./start.sh                          # 一键启动（构建前端后 FastAPI 托管，仅后端 8300），Ctrl+C 停止；SKIP_BUILD=1 跳过构建
 uv sync                             # 安装/同步 Python 依赖（根目录执行）
 bun install                         # 安装 JS 依赖（根目录执行）
 cd frontend && bun run build        # 构建前端到 frontend/dist（后端会自动挂载为静态站）
@@ -50,7 +50,9 @@ cd frontend && bun run typecheck    # TypeScript 类型检查（tsc --noEmit）
 uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 ```
 
-注意：本机 8000 端口被其他服务占用，后端固定用 **8300**，前端 vite 代理 `/api` → 8300。
+注意：本机 8000 端口被其他服务占用，后端固定用 **8300**。生产模式由 FastAPI 托管
+`frontend/dist`（`main.py` 末尾 StaticFiles 挂载），前端只需访问 8300 一个端口；
+仅开发调试时才单独跑 `cd frontend && bun run dev`（vite 代理 `/api` → 8300）。
 后端监听 `0.0.0.0`，WebDAV 书库（及 API）可从局域网访问；WebDAV 无认证，勿暴露到公网。
 
 ## 关键约定
@@ -123,19 +125,26 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   阅读进度（`reader-progress:<bookId>` = `{cid, y}`，含滚动
   位置）与字号/主题/音色设置（`reader-settings`）存 localStorage；进入阅读页自动续读。
   主题（白纸/护眼/夜间）整页换背景，工具栏按钮与音色下拉用 `.reader-bar` 继承主题色。
-- **听书（edge-tts，逐句）**：`tts.py` 把章节抽成纯文本（epub 用 BeautifulSoup 按行折叠，
-  图片无文本自然跳过），再按 `tts.SEG_RE` 分句（句读标点/换行；**前端 ReaderPage 的
-  SEG_RE 与它逐字一致，改动必须两边同步**）。一句一个 mp3（整章一条无法对齐朗读位置），
-  缓存为 `books/<id>/tts/<cid>.<src|dst>.<voice>.<idx>.mp3`，章节文件更新后缓存自动失效
-  （合成写临时文件，完成转正，中断删残片）。音色白名单 `tts.VOICES`（中文显示名），
-  非法音色 400（也防文件名注入）。epub 的 `chapter_text` 提取口径与阅读器渲染严格一致
-  （去首个 h1-h3、跳过 style/script/title、strip 每块、丢空块），前端渲染后
-  `applyEpubSegments` 用 TreeWalker 把文本节点按同一 SEG_RE 拆成句级 `span[data-si]`，
-  句序号与 sentences 清单逐一对齐（txt 则由 Solid 直接按 segments 渲染 span）。
-  前端逐句连播：播放中预取下一句触发后端预合成以减少句间停顿，播完自动接下一句/下一章；
-  当前朗读句加 `.tts-active` 高亮并自动滚动到视野中部；播放条有播放/暂停、音色选择、
-  倍速（`audio.playbackRate`，存 `reader-settings`）与句进度显示；切章/换音色时若处于
-  播放意图（`wantPlay`）自动换源续播（换音色重读当前句）。
+- **听书（edge-tts，逐句）**：**前端自行分句、直接把每句文本发给后端合成**——渲染的句
+  与朗读的句天然是同一份，逐句高亮必然对齐，后端不参与分句/对齐。`POST /api/tts/speak`
+  （`{text, voice}`）合成任意文本为 mp3，按 `sha1(音色+文本)` 全局缓存到
+  `data/tts_cache/`（跨书复用；合成写唯一临时文件，完成转正，中断删残片）；
+  文本上限 `MAX_TEXT_CHARS`（1000 字）防滥用。音色白名单 `tts.VOICES`（中文显示名），
+  非法音色 400。前端分句规则 `SEG_RE`（句读标点/换行）：txt 始终按句渲染
+  `span[data-si]`；epub 用 `splitEpubHtml`（DOMParser 处理 HTML 字符串，按章节缓存）
+  同步拆出句级 span 并收集句文本——**不依赖渲染后 DOM 的 effect/ref 时序**（曾因竞态
+  导致句清单为空），渲染的句与朗读的句是同一份数据；拆句跳过 style/script/title
+  内的文本与纯空白节点。
+  播放走内存 Blob 缓存（`audioCache`：句号 → 合成 Promise，失败不缓存）：播放当前句时
+  预取随后 3 句，`prefetchAll` 后台 2 并发预缓存全章；合成/播放失败自动跳下一句
+  （连续失败 5 句才停止），播完自动接下一句/下一章；当前朗读句加 `.tts-active` 高亮
+  并自动滚动到视野中部；切章/换音色时若处于播放意图（`wantPlay`）
+  自动换源续播（换音色重读当前句）。朗读句清单以 `contentCid` 门控：content 必须属于
+  当前章节，否则切章后内容未加载完时会拿上一章的句子接着读。播放/暂停按钮只随播放意图
+  （`wantPlay`/`setWant`）变化——句间换 audio.src 触发的 pause/playing 事件不再驱动图标；
+  暂停/关闭/切章时递增 `playGen`，在途的下一句合成等待被作废（句间隙暂停也能立刻停住）。
+  播放控件是右下悬浮球（SVG 播放/暂停图标）+ 上方悬浮卡片（进度/倍速/音色/关闭），
+  浮起避开手机底部导航栏遮挡，不再是贴底通栏。
 - **章节图片**：`GET .../image?src=` 按 `parsing.epub_chapter_files`（章节 id → epub 内部
   文档路径，与 parse_epub 编号一致，按 mtime 缓存）解析 `<img>` 相对 src 后从原始
   epub zip 读取；路径越界 400。部分 epub 的 HTML 相对路径与 zip 结构不一致，
@@ -183,10 +192,8 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 - `POST /api/books/{id}/toc/retranslate` — 重翻目录（全部章节标题；epub 已译章节的 HTML 标题元素同步更新）
 - `GET /api/books/{id}/export?fmt=txt|epub` — 导出
 - `GET /api/tts/voices` — 听书音色列表（含 default）
-- `GET /api/books/{id}/chapters/{cid}/tts/sentences?translated=` — 章节朗读分句清单
-  （前端据此逐句连播并对齐高亮，分段规则与前端一致）
-- `GET /api/books/{id}/chapters/{cid}/tts/sentence?idx=&translated=&voice=` — 单句语音 mp3
-  （命中缓存直接返回文件，否则合成后落盘缓存再返回）
+- `POST /api/tts/speak` — 任意文本语音 mp3（body: `{text, voice}`；前端分句后直接发句文本，
+  按 音色+文本 哈希全局缓存，命中直接返回文件）
 - `GET /api/books/{id}/chapters/{cid}/image?src=` — epub 章节内嵌图片
   （按章节文档路径解析相对 src，从原始 epub 读取）
 - `WebDAV /webdav/` — 只读书库（PROPFIND 列出 EPUB、GET 下载），需在设置中开启

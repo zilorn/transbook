@@ -50,6 +50,7 @@ export default function ReaderPage() {
   const bookId = params.id
   const [book, setBook] = createSignal<Book | null>(null)
   const [content, setContent] = createSignal('')
+  const [contentCid, setContentCid] = createSignal('') // content 属于哪一章（切章后旧内容清空前不朗读）
   const [loading, setLoading] = createSignal(true)
   const [error, setError] = createSignal('')
   const [tocOpen, setTocOpen] = createSignal(false)
@@ -57,22 +58,28 @@ export default function ReaderPage() {
   const [settings, setSettings] = createSignal<ReaderSettings>(loadSettings())
   const [previewImg, setPreviewImg] = createSignal('')
   // ---- 听书（edge-tts，逐句连播）----
+  // 前端自行分句、直接把每句文本发给后端合成：渲染的句与朗读的句天然是同一份，逐句高亮必然对齐。
   const [ttsOpen, setTtsOpen] = createSignal(false)
   const [ttsPlaying, setTtsPlaying] = createSignal(false)
   const [ttsBusy, setTtsBusy] = createSignal(false)
   const [ttsError, setTtsError] = createSignal('')
   const [voices, setVoices] = createSignal<Record<string, string>>({})
   const [voiceDefault, setVoiceDefault] = createSignal('')
-  const [sentences, setSentences] = createSignal<string[]>([]) // 当前章节的朗读分句
   const [ttsIdx, setTtsIdx] = createSignal(-1) // 当前朗读句下标（-1 = 未在朗读）
   let audio: HTMLAudioElement | undefined
   let wantPlay = false // 播放意图：切章/播报完自动续播都靠它
-  let playedCid = '' // 当前音频对应的章节 id（区分切章与换音色）
-  let sentLoad: { key: string; p: Promise<string[]> } | null = null // 分句清单加载缓存
+  let playGen = 0 // 播放代际：暂停/关闭/切章时递增，作废在途的合成等待与下一句接续
+  // 播放/暂停按钮只随播放意图变（句间换音频触发的 pause/playing 事件不再让图标闪烁）
+  const setWant = (v: boolean) => { wantPlay = v; setTtsPlaying(v) }
+  let playedKey = '' // 当前音频对应的 章节id:音色（区分切章与换音色）
+  let consecFails = 0 // 连续合成/播放失败句数，超阈值才停止
+  let blobUrl = ''
+  const audioCache = new Map<number, Promise<Blob>>() // 本章音频缓存：句号 → 合成 Promise（失败不缓存）
+  let prefetchGen = 0 // 预缓存代际：切章/换音色时作废旧的后台预取
 
-  // 分句规则与后端 tts.SEG_RE 一致（两边必须同步）：一句（含结尾标点）或连续换行
+  // 分句规则：一句（含结尾标点）或连续换行
   const SEG_RE = /[^。！？!?…\n]+[。！？!?…]*|\n+/g
-  interface Seg { t: string; si: number } // si=-1 为纯换行排版段，不朗读；其余与 sentences 顺序一一对应
+  interface Seg { t: string; si: number } // si=-1 为纯换行排版段，不朗读；其余按顺序编号
   const segments = (): Seg[] => {
     const txt = content().trim()
     if (!txt) return []
@@ -80,12 +87,22 @@ export default function ReaderPage() {
     return (txt.match(SEG_RE) || []).map(t => ({ t, si: /^\s*$/.test(t) ? -1 : si++ }))
   }
 
-  // epub 章节渲染后把文本节点按同一规则拆成句级 span[data-si]，
-  // 与后端 chapter_text 的提取口径一致（strip 每块、丢空块、去首个 h1-h3、跳过 style/script/title），
-  // 句序号因而与 sentences 清单一一对应，逐句高亮才能对上。
+  // 当前章节的朗读句清单：txt 由正文直接分句；epub 由拆句后的 HTML 得到（见 epubSeg）
+  // content 必须属于当前章节：切章后 loadChapter 还在等网络时 content 仍是上一章，
+  // 不门控的话自动续播会拿上一章的句子接着读
+  const sentences = (): string[] => {
+    const c = chapter()
+    if (!c || contentCid() !== c.id) return []
+    return c.format === 'epub' ? (epubSeg()?.texts ?? []) : segments().filter(s => s.si >= 0).map(s => s.t)
+  }
+
+  // epub：用 DOMParser 处理 HTML 字符串（不依赖渲染时机，避免 effect/ref 竞态导致句清单为空），
+  // 把文本节点拆成句级 span[data-si] 并同步收集句文本作为朗读清单——渲染的句与朗读的句是同一份数据。
+  // 跳过 style/script/title 内的文本与纯空白节点（不朗读）。
   let segEl: HTMLDivElement | undefined
-  const applyEpubSegments = (el: HTMLElement) => {
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+  const splitEpubHtml = (html: string): { html: string; texts: string[] } => {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const walker = doc.createTreeWalker(doc.body || doc.documentElement, NodeFilter.SHOW_TEXT, {
       acceptNode(n) {
         const p = (n as Text).parentElement
         return p && p.closest('style,script,title,noscript')
@@ -95,19 +112,33 @@ export default function ReaderPage() {
     const nodes: Text[] = []
     while (walker.nextNode()) nodes.push(walker.currentNode as Text)
     let si = 0
+    const texts: string[] = []
     for (const node of nodes) {
       const stripped = node.data.trim()
-      if (!stripped) continue // 纯空白节点：后端对应空行已丢弃
-      const frag = document.createDocumentFragment()
+      if (!stripped) continue
+      const frag = doc.createDocumentFragment()
       for (const part of stripped.match(SEG_RE) || []) {
-        if (/^\s*$/.test(part)) { frag.appendChild(document.createTextNode(part)); continue }
-        const span = document.createElement('span')
+        if (/^\s*$/.test(part)) { frag.appendChild(doc.createTextNode(part)); continue }
+        const span = doc.createElement('span')
         span.dataset.si = String(si++)
         span.textContent = part
+        texts.push(part)
         frag.appendChild(span)
       }
       node.replaceWith(frag)
     }
+    return { html: doc.documentElement.innerHTML, texts }
+  }
+
+  // 按章节缓存拆句结果（拆整章 DOM 有开销，避免每次响应式访问都重算）
+  let epubSegCache: { key: string; v: { html: string; texts: string[] } } | null = null
+  const epubSeg = () => {
+    const c = chapter()
+    const h = content()
+    if (!c || c.format !== 'epub' || !h) return null
+    const key = `${c.id}:${h.length}`
+    if (epubSegCache?.key !== key) epubSegCache = { key, v: splitEpubHtml(h) }
+    return epubSegCache.v
   }
 
   // epub 章节存的是完整 XHTML 文档；图片为 epub 内部相对路径，重写为后端图片接口
@@ -140,6 +171,7 @@ export default function ReaderPage() {
     setLoading(true)
     setError('')
     setContent('')
+    setContentCid('')
     const preferDst = c.status === 'done'
     try {
       let text: string
@@ -151,6 +183,7 @@ export default function ReaderPage() {
       }
       if (params.cid !== c.id) return // 等待期间已切到别章，丢弃
       setContent(c.format === 'epub' ? processEpub(text, c.id) : text)
+      setContentCid(c.id)
       setLoading(false)
       // 恢复上次的滚动位置；新章节回顶部并记为当前进度
       const saved = loadProgress(bookId)
@@ -169,111 +202,156 @@ export default function ReaderPage() {
     if (c) void loadChapter(c)
   })
 
-  // ---- 听书播放控制（逐句连播：当前句高亮，句间/章末自动接续）----
+  // ---- 听书播放控制（逐句连播：当前句高亮，句间/章末自动接续，失败句跳过）----
   const curVoice = () => settings().voice || voiceDefault()
-  const sentenceUrl = (c: Chapter, i: number): string =>
-    api.ttsSentenceUrl(bookId, c.id, c.status === 'done', curVoice(), i)
-  const sentKey = (c: Chapter): string => `${c.id}:${c.status === 'done'}`
+  const playKey = () => `${params.cid}:${curVoice()}`
 
-  const loadSentences = (c: Chapter): Promise<string[]> => {
-    const key = sentKey(c)
-    if (sentLoad?.key === key) return sentLoad.p
-    const p = api.ttsSentences(bookId, c.id, c.status === 'done')
-      .then(r => r.sentences)
-      .catch((e: any) => { setTtsError(`分句加载失败：${e.message || e}`); return [] as string[] })
-    sentLoad = { key, p }
-    void p.then(list => {
-      if (sentLoad?.key === key) { setSentences(list); setTtsIdx(-1) }
-    })
+  // 合成并缓存第 i 句音频（Promise 缓存，并发调用共享；失败不缓存，下次重试）
+  const getAudio = (i: number): Promise<Blob> => {
+    let p = audioCache.get(i)
+    if (!p) {
+      p = api.ttsSpeak(sentences()[i], curVoice())
+      p.catch(() => audioCache.delete(i))
+      audioCache.set(i, p)
+    }
     return p
   }
 
-  // 打开播放条或切章时预拉分句清单（txt 章节同时用于分句高亮渲染）；关闭时清空
-  createEffect(() => {
-    const c = chapter()
-    if (!c || !ttsOpen()) { sentLoad = null; setSentences([]); setTtsIdx(-1); return }
-    void loadSentences(c)
-  })
+  // 后台预缓存本章全部音频（2 并发 worker），播到时即时出声
+  const prefetchAll = () => {
+    const gen = ++prefetchGen
+    const total = sentences().length
+    let next = 0
+    const worker = async () => {
+      while (gen === prefetchGen) {
+        const i = next++
+        if (i >= total) break
+        try { await getAudio(i) } catch { /* 失败句跳过，播到时会重试 */ }
+      }
+    }
+    void worker()
+    void worker()
+  }
 
   const ensureAudio = (): HTMLAudioElement => {
     if (!audio) {
       audio = new Audio()
       audio.preload = 'auto'
-      audio.addEventListener('playing', () => { setTtsPlaying(true); setTtsBusy(false) })
-      audio.addEventListener('pause', () => setTtsPlaying(false))
+      audio.addEventListener('playing', () => { setTtsBusy(false); consecFails = 0 })
       audio.addEventListener('waiting', () => setTtsBusy(true))
       audio.addEventListener('ended', () => {
         if (!wantPlay) return
-        // 播完自动接下一句；本章播完连播下一章（切章由下面的 createEffect 接管换源）
-        if (ttsIdx() + 1 < sentences().length) playSentence(ttsIdx() + 1)
+        // 播完自动接下一句；本章播完连播下一章（切章由下面的 createEffect 接管续播）
+        if (ttsIdx() + 1 < sentences().length) void playSentence(ttsIdx() + 1)
         else if (idx() >= 0 && idx() < chapters().length - 1) next()
-        else { wantPlay = false; setTtsPlaying(false); setTtsBusy(false); setTtsIdx(-1) }
+        else { setWant(false); setTtsBusy(false); setTtsIdx(-1) }
       })
       audio.addEventListener('error', () => {
-        setTtsBusy(false); setTtsPlaying(false)
-        if (wantPlay) setTtsError('语音加载失败，请检查后端是否能访问 edge-tts 服务')
+        setTtsBusy(false)
+        if (wantPlay) skipBadSentence(ttsIdx()) // 播放失败也跳过，不卡住
+        else setWant(false)
       })
     }
     return audio
   }
 
-  const playSentence = (i: number) => {
+  // 合成/播放失败：跳到下一句（连续失败 5 句才停止，防死循环）
+  const skipBadSentence = (i: number) => {
+    consecFails++
+    if (!wantPlay) return
+    if (consecFails >= 5) {
+      setWant(false)
+      setTtsBusy(false)
+      setTtsError('连续多句语音合成失败，已停止（请检查后端能否访问 edge-tts）')
+      return
+    }
+    if (i + 1 < sentences().length) void playSentence(i + 1)
+    else if (idx() >= 0 && idx() < chapters().length - 1) next()
+    else { setWant(false); setTtsBusy(false); setTtsIdx(-1) }
+  }
+
+  const playSentence = async (i: number) => {
     const c = chapter()
     if (!c || i < 0 || i >= sentences().length) return
-    const a = ensureAudio()
+    const key = playKey()
+    const gen = playGen
     setTtsError('')
     setTtsIdx(i)
     setTtsBusy(true)
-    playedCid = c.id
-    a.src = sentenceUrl(c, i)
+    playedKey = key
+    let blob: Blob
+    try {
+      blob = await getAudio(i)
+    } catch {
+      skipBadSentence(i) // 合成失败：跳句
+      return
+    }
+    // 等待合成期间已切章/换音色/暂停：gen 变了说明用户已主动停掉，在途的下一句一并作废
+    if (!wantPlay || gen !== playGen || playedKey !== key || ttsIdx() !== i) return
+    const a = ensureAudio()
+    if (blobUrl) URL.revokeObjectURL(blobUrl)
+    blobUrl = URL.createObjectURL(blob)
+    a.src = blobUrl
     a.playbackRate = settings().rate
     a.play().catch((e) => { setTtsBusy(false); setTtsError(String(e.message || e)) })
-    // 预取（触发后端预合成）下一句，减少句间停顿
-    if (i + 1 < sentences().length)
-      fetch(sentenceUrl(c, i + 1)).then(r => r.blob()).catch(() => {})
+    // 预取随后几句，减少句间停顿
+    for (let j = i + 1; j < Math.min(i + 4, sentences().length); j++) getAudio(j).catch(() => {})
   }
 
-  const playTts = async () => {
-    const c = chapter()
-    if (!c) return
-    const list = await loadSentences(c)
-    const now = chapter()
-    if (!now || sentKey(now) !== sentKey(c) || !wantPlay) return // 等待期间已切章/暂停
-    if (!list.length) { setTtsError('本章没有可朗读的文本'); wantPlay = false; return }
-    playSentence(0)
+  const playTts = () => {
+    if (!chapter()) return
+    if (!sentences().length) { setTtsError('本章没有可朗读的文本'); setWant(false); return }
+    void playSentence(Math.max(ttsIdx(), 0))
+    prefetchAll()
   }
 
   const toggleTts = () => {
     setTtsOpen(true)
     if (wantPlay) {
-      wantPlay = false
+      // 暂停：只有用户操作才停；递增 playGen 把在途的下一句合成/接续一并作废
+      setWant(false)
+      playGen++
       audio?.pause()
     } else {
-      wantPlay = true
+      setWant(true)
       // 暂停在同一句中途则续播，否则从头开始
-      if (audio && playedCid === params.cid && ttsIdx() >= 0 && !audio.ended && audio.currentTime > 0) {
+      if (audio && playedKey === playKey() && ttsIdx() >= 0 && !audio.ended && audio.currentTime > 0) {
         setTtsError('')
         audio.play().catch((e) => setTtsError(String(e.message || e)))
       } else {
-        void playTts()
+        playTts()
       }
     }
   }
 
   const closeTts = () => {
-    wantPlay = false
+    setWant(false)
+    playGen++
     audio?.pause()
     setTtsOpen(false)
     setTtsIdx(-1)
   }
 
-  // 切章或换音色时，若处于播放意图则换源续播（换音色重读当前句，切章从首句开始）
+  // 切章/换音色：清空本章音频缓存与朗读位置，作废在途的合成等待
+  createEffect((prev: string) => {
+    const key = `${params.cid}:${settings().voice}`
+    if (prev && prev !== key) {
+      audioCache.clear()
+      prefetchGen++
+      playGen++
+      setTtsIdx(-1)
+      consecFails = 0
+    }
+    return key
+  }, '')
+
+  // 切章或换音色时，若处于播放意图则换源续播（换音色重读当前句，切章从首句开始）。
+  // 等分句就绪（epub 需等渲染拆句完成）再启动，避免误报"没有可朗读文本"。
   createEffect(() => {
-    params.cid
-    settings().voice
-    if (!wantPlay || !chapter()) return
-    if (playedCid === params.cid && ttsIdx() >= 0) playSentence(ttsIdx())
-    else void playTts()
+    const key = playKey()
+    if (!wantPlay || !chapter() || !sentences().length) return
+    if (playedKey === key && ttsIdx() >= 0) void playSentence(ttsIdx())
+    else playTts()
   })
 
   // 倍速即时生效
@@ -288,19 +366,7 @@ export default function ReaderPage() {
       document.querySelector(`[data-si="${i}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   })
 
-  // epub 章节：渲染后拆分句级 span（每章内容只拆一次）
-  let segAppliedFor = ''
-  createEffect(() => {
-    const c = chapter()
-    const h = content()
-    if (!c || c.format !== 'epub' || !segEl || !h) return
-    const key = `${c.id}:${h.length}`
-    if (segAppliedFor === key) return
-    segAppliedFor = key
-    applyEpubSegments(segEl)
-  })
-
-  // epub 高亮靠切换 .tts-active（txt 由 Solid 内联样式绑定，不走这里）
+  // epub 高亮靠切换 .tts-active（txt 由 Solid classList 绑定，不走这里）
   createEffect(() => {
     const i = ttsIdx()
     const c = chapter()
@@ -420,7 +486,7 @@ export default function ReaderPage() {
 
       {/* 正文 */}
       <div class="max-w-[800px] mx-auto px-4 md:px-6 pt-5"
-        style={{ 'padding-bottom': ttsOpen() ? '90px' : '32px' }}>
+        style={{ 'padding-bottom': ttsOpen() ? '120px' : '32px' }}>
         <Show when={!loading()} fallback={<p class="text-center py-[60px] opacity-60">加载中…</p>}>
           <Show when={!error()} fallback={
             <div class="text-center py-[60px]">
@@ -436,20 +502,17 @@ export default function ReaderPage() {
                   <h1 class="text-[1.35em] font-bold mt-0 mb-6 leading-[1.5] break-all">
                     {c().title_translated || c().title}
                   </h1>
-                  {/* 听书逐句高亮：txt 打开播放条后按后端分句渲染 span（segments 与
-                      sentences 顺序一致）；epub 渲染后由 applyEpubSegments 拆出 span[data-si]，
-                      两者都只对当前朗读句加高亮 */}
+                  {/* 听书逐句高亮：txt 始终按句渲染 span；epub 渲染的是 epubSeg 拆句后的
+                      HTML（已含 span[data-si]）。两者都只对当前朗读句加 .tts-active */}
                   <Show when={c().format === 'epub'} fallback={
                     <pre class="m-0 whitespace-pre-wrap break-words font-[inherit]"
                       style={{ 'font-size': `${settings().fontSize}px`, 'line-height': 1.9 }}>
-                      <Show when={ttsOpen() && sentences().length > 0} fallback={content()}>
-                        <For each={segments()}>{(seg) => seg.si < 0 ? seg.t : (
-                          <span data-si={seg.si} class="px-[1px]"
-                            classList={{ 'tts-active': seg.si === ttsIdx() }}>
-                            {seg.t}
-                          </span>
-                        )}</For>
-                      </Show>
+                      <For each={segments()}>{(seg) => seg.si < 0 ? seg.t : (
+                        <span data-si={seg.si} class="px-[1px]"
+                          classList={{ 'tts-active': seg.si === ttsIdx() }}>
+                          {seg.t}
+                        </span>
+                      )}</For>
                     </pre>
                   }>
                     <div class="preview-html break-words"
@@ -459,7 +522,7 @@ export default function ReaderPage() {
                         const t = e.target as HTMLElement
                         if (t.tagName === 'IMG') setPreviewImg((t as HTMLImageElement).src)
                       }}
-                      innerHTML={content()} />
+                      innerHTML={epubSeg()?.html ?? content()} />
                   </Show>
                   <div class="reader-bar flex justify-between gap-2 mt-10 pt-5 border-t"
                     style={{ 'border-color': theme().line }}>
@@ -505,50 +568,57 @@ export default function ReaderPage() {
         </div>
       </Show>
 
-      {/* 听书播放条 */}
+      {/* 听书悬浮球：球体播放/暂停（SVG 图标），上方悬浮卡片放进度/倍速/音色/关闭。
+          浮起一段距离，避开手机底部导航栏/浏览器工具栏的遮挡 */}
       <Show when={ttsOpen()}>
-        <div class="reader-bar fixed bottom-0 left-0 right-0 z-10 border-t"
-          style={{ background: theme().bg, 'border-color': theme().line }}>
-          <div class="max-w-[800px] mx-auto flex items-center gap-2 px-3 h-[52px]">
-            <button class="border-0 px-2 shrink-0" title={ttsPlaying() ? '暂停' : '播放'}
-              onClick={toggleTts}>
-              <Show when={ttsPlaying()} fallback={
-                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="currentColor">
-                  <polygon points="6 4 20 12 6 20 6 4" />
+        <div class="fixed z-20 right-3 flex flex-col items-end gap-2"
+          style={{ bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))' }}>
+          <div class="reader-bar rounded-[12px] border shadow-lg p-2.5 w-[228px]"
+            style={{ background: theme().bg, 'border-color': theme().line }}>
+            <div class="flex items-center gap-1 mb-2">
+              <span class="flex-1 min-w-0 truncate text-[12px] opacity-60">
+                {ttsError() || (ttsBusy() ? '语音生成中…' : (
+                  (ttsIdx() >= 0 ? `${ttsIdx() + 1}/${sentences().length} · ` : '') +
+                  (chapter()?.title_translated || chapter()?.title || '')
+                ))}
+              </span>
+              <button class="border-0 px-1 shrink-0" title="关闭听书" onClick={closeTts}>
+                <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
                 </svg>
-              }>
-                <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="currentColor">
-                  <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
-                </svg>
-              </Show>
-            </button>
-            <span class="flex-1 min-w-0 truncate text-[12px] opacity-60">
-              {ttsError() || (ttsBusy() ? '语音生成中…' : (
-                (ttsIdx() >= 0 ? `${ttsIdx() + 1}/${sentences().length} · ` : '') +
-                (chapter()?.title_translated || chapter()?.title || '')
-              ))}
-            </span>
-            <select class="shrink-0 w-[68px]" title="倍速"
-              value={String(settings().rate)}
-              onChange={(e) => setSettings(s => ({ ...s, rate: Number(e.currentTarget.value) }))}>
-              <For each={RATES}>
-                {(r) => <option value={r}>{r}×</option>}
-              </For>
-            </select>
-            <select class="shrink-0 max-w-[140px]"
-              value={settings().voice || voiceDefault()}
-              onChange={(e) => setSettings(s => ({ ...s, voice: e.currentTarget.value }))}>
-              <For each={Object.entries(voices())}>
-                {([id, name]) => <option value={id}>{name}</option>}
-              </For>
-            </select>
-            <button class="border-0 px-2 shrink-0" title="关闭听书" onClick={closeTts}>
-              <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
-              </svg>
-            </button>
+              </button>
+            </div>
+            <div class="flex gap-2">
+              <select class="shrink-0 w-[62px]" title="倍速"
+                value={String(settings().rate)}
+                onChange={(e) => setSettings(s => ({ ...s, rate: Number(e.currentTarget.value) }))}>
+                <For each={RATES}>
+                  {(r) => <option value={r}>{r}×</option>}
+                </For>
+              </select>
+              <select class="flex-1 min-w-0"
+                value={settings().voice || voiceDefault()}
+                onChange={(e) => setSettings(s => ({ ...s, voice: e.currentTarget.value }))}>
+                <For each={Object.entries(voices())}>
+                  {([id, name]) => <option value={id}>{name}</option>}
+                </For>
+              </select>
+            </div>
           </div>
+          <button class="primary rounded-full w-[52px] h-[52px] shadow-lg flex items-center justify-center p-0"
+            title={ttsPlaying() ? '暂停' : '播放'}
+            onClick={toggleTts}>
+            <Show when={ttsPlaying()} fallback={
+              <svg class="w-[22px] h-[22px] translate-x-[2px]" viewBox="0 0 24 24" fill="currentColor">
+                <polygon points="6 4 20 12 6 20 6 4" />
+              </svg>
+            }>
+              <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
+              </svg>
+            </Show>
+          </button>
         </div>
       </Show>
 
