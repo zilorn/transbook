@@ -306,47 +306,55 @@ export default function BookDetail() {
             </Show>
           </div>
 
-          <div class="flex gap-2.5 my-4 items-center flex-wrap">
+          <div class="flex flex-col gap-2.5 my-4 items-start">
             <Show when={!b().no_translate}>
-              <button class="primary" disabled={busy() || b().running}
-                onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
-                {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
-              </button>
-              <button disabled={busy() || b().running}
-                onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
-                排队全部重译
-              </button>
-              <button class="link" onClick={() => navigate('/queue')}>前往翻译队列 →</button>
+              {/* 翻译操作：方框按钮紧贴成组，单独一行 */}
+              <div class="flex items-center flex-wrap gap-y-2">
+                <div class="flex">
+                  <button class="primary rounded-r-none" disabled={busy() || b().running}
+                    onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
+                    {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
+                  </button>
+                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
+                    onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
+                    排队全部重译
+                  </button>
+                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
+                    onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
+                    生成术语表
+                  </button>
+                  <button class="rounded-l-none -ml-px" disabled={busy() || b().running}
+                    onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
+                    重翻目录
+                  </button>
+                </div>
+                <button class="link ml-2.5" onClick={() => navigate('/queue')}>前往翻译队列 →</button>
+              </div>
             </Show>
-            <Show when={b().source}>
-              <button disabled={busy() || b().running || updating()}
-                title="从来源站点检查并抓取最新章节"
-                onClick={updateFromSource}>
-                {updating() ? '正在更新…' : '更新章节'}
-              </button>
-            </Show>
-            <Show when={!b().no_translate}>
+            <div class="flex gap-2.5 items-center flex-wrap">
+              <Show when={b().source}>
+                <button disabled={busy() || b().running || updating()}
+                  title="从来源站点检查并抓取最新章节"
+                  onClick={updateFromSource}>
+                  {updating() ? '正在更新…' : '更新章节'}
+                </button>
+              </Show>
               <button disabled={busy() || b().running}
-                onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
-                生成术语表
+                title="标记后仅用于托管（阅读/导出/WebDAV），不再参与任何翻译任务"
+                onClick={() => act(
+                  () => api.setNoTranslate(b().id, !b().no_translate),
+                  b().no_translate ? '已取消「无需翻译」标记' : '已标记为无需翻译（仅托管）'
+                ).then(() => { if (b().no_translate && tab() === 'glossary') setTab('chapters') })}>
+                {b().no_translate ? '取消「无需翻译」' : '标记为无需翻译'}
               </button>
-              <button disabled={busy() || b().running}
-                onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
-                重翻目录
-              </button>
-            </Show>
-            <button disabled={busy() || b().running}
-              title="标记后仅用于托管（阅读/导出/WebDAV），不再参与任何翻译任务"
-              onClick={() => act(
-                () => api.setNoTranslate(b().id, !b().no_translate),
-                b().no_translate ? '已取消「无需翻译」标记' : '已标记为无需翻译（仅托管）'
-              ).then(() => { if (b().no_translate && tab() === 'glossary') setTab('chapters') })}>
-              {b().no_translate ? '取消「无需翻译」' : '标记为无需翻译'}
-            </button>
-            <a class="inline-block px-[14px] py-[7px] border border-line rounded-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
-              href={api.exportUrl(b().id, 'txt')} download="">导出 TXT</a>
-            <a class="inline-block px-[14px] py-[7px] border border-line rounded-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
-              href={api.exportUrl(b().id, 'epub')} download="">导出 EPUB</a>
+            </div>
+            {/* 导出：方框按钮紧贴成组，单独一行 */}
+            <div class="flex">
+              <a class="inline-block px-[14px] py-[7px] border border-line rounded-l-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
+                href={api.exportUrl(b().id, 'txt')} download="">导出 TXT</a>
+              <a class="inline-block px-[14px] py-[7px] border border-line rounded-r-[6px] -ml-px bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
+                href={api.exportUrl(b().id, 'epub')} download="">导出 EPUB</a>
+            </div>
           </div>
           {error() && <p class="text-danger text-[13px]">{error()}</p>}
           {msg() && <p class="text-[#166534] text-[13px]">{msg()}</p>}
