@@ -1,5 +1,5 @@
 [project]
-name = "tranlatexbook"
+name = "transbook"
 version = "0.1.0"
 description = "Book translation web app backend (epub/txt -> DeepSeek -> epub/txt)"
 requires-python = ">=3.11"

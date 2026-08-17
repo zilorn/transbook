@@ -66,17 +66,6 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   分段数尽量少），发给模型时带 `【N】` 编号标记，响应按编号解析回原文位置；
   缺失编号重试一次，仍缺失则保留原文。章节标题和书名用单独的提示词翻译，不走正文分段。
   翻译中的章节实时维护 `seg_total`/`seg_done`（正文分段数 + 1 个标题段），供前端做分段进度可视化。
-- **多 API Key**：`config.api_keys` 为 `[{key, model, concurrency}]`，`model` 空 /
-  `concurrency` 0 表示跟随统一的 `model`/`concurrency`；旧单 `api_key` 配置读取时自动迁移。
-  配置接口对 key 脱敏返回（前 6 位 + `...`），原样回传时按位置回代原值。
-- **术语表采样**：`translator._sample_text` 把预算（默认 12000 字符）均分到每章开头
-  （单章 500~3000 字符），章节过多、预算不够分时按均匀间隔选章——覆盖全书而非只抽少数章节。
-- **术语表去重**：重复生成术语时，提示词会附上已有术语让模型避开；生成结果再经
-  `translator._merge_glossary` 按规范化 src（去空白、小写）去重合并，已有条目优先保留。
-- **术语备注**：词条可带可选 `note` 字段（生成时提示模型：人名尽量标明性别、备注不超过
-  15 字，可为空）；翻译提示词中以 `src = dst（note）` 形式附上，供模型参考。
-- **首次翻译自动建术语表**：`translate_book` 启动时若术语表为空且尚无已译章节，
-  会先自动执行一次 `generate_glossary` 再进入翻译；生成失败不阻塞翻译（无术语表继续）。
 - **无需翻译标记**：`book.json` 的 `no_translate` 布尔字段（缺省 false）表示"仅托管"
   （阅读/导出/WebDAV，如托管本身已是译文的书）。标记后所有翻译入口（整书翻译、单章重译、
   重翻书名/目录、生成术语表、入队）一律 400 拒绝；标记时自动移出翻译队列，
@@ -103,21 +92,6 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   3 次（规避风控）；每个站点模块各持有一个 HttpGate 实例。抓取任务生命周期统一由
   `tasks.CrawlRunner` 管理：站点模块注入 `source_key`/`fetch_info`/`fetch_chapter` 回调，
   抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
-- **syosetu 爬虫**：`crawlers/syosetu.py` 抓 syosetu.com。爬来的书 `book.json` 顶层带
-  `source = {site, url, ncode}`（详情页 URL），章节带 `src_ep` 话数编号；正文按
-  `<p>` 一行一段存为 txt 章节。排行榜（发现页）：`rankings(period, genre, kind)` 解析
-  `/rank/list/type/{period}_{kind}/`（综合榜，kind=全部/连载/完结/短篇）与
-  `/rank/genrelist/type/{period}_{genre}/`（分类榜），每榜 50 条；
-  `RANK_PERIODS`/`RANK_GENRES`/`RANK_KINDS` 为合法参数及中文显示名。
-- **kakuyomu 爬虫**：`crawlers/kakuyomu.py` 抓 kakuyomu.jp。搜索与目录走官方前端同用的
-  GraphQL 接口（`POST /graphql`）：搜索 `searchWorks` 支持 `GENRES` 多选过滤
-  （14 个类型，值为中文显示名），目录 `tableOfContents` 一次返回全部话数（含分章作品，
-  拍平为单一章节流）；章节正文解析 HTML 页 `.widget-episodeBody`（`<p>` 一段一行，
-  去 ruby 注音，标题取 `p.widget-episodeTitle`）。书的 `source = {site, url, work_id}`，
-  章节 `src_ep` 存 episode ID 字符串（非数字序号）。排行榜（发现页）：
-  `rankings(genre, period, variation)` 抓 `/rankings/{genre}/{period}?work_variation=`，
-  页面类名为构建期哈希，数据解析自 `__NEXT_DATA__` 内嵌 JSON 的 `__APOLLO_STATE__`
-  （ROOT_QUERY 的 `rankedWorks(...)` 键 → Work/UserAccount 归一化实体），每榜 100 条。
 - **阅读器**：`ReaderPage.tsx`，全屏路由 `/books/:id/read(/:cid)`（App.tsx 的 Layout 按路径
   识别，不渲染侧边栏）。内容取译文优先（`status === 'done'` 先试 `?translated=true`，
   404 回退原文）；epub 章节的 `<img>` 相对路径重写为章节图片接口（外链图保留、
@@ -172,38 +146,4 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 
 ## API 一览
 
-- `GET/PUT /api/config` — 设置（api_keys 多 Key（各可带 model/concurrency，空/0 跟随统一）、
-  base_url、model、target_lang、concurrency、max_segment_chars）
-- `POST /api/books` — 上传 epub/txt（multipart）
-- `GET /api/books` / `GET /api/books/{id}` / `DELETE /api/books/{id}`
-- `PUT /api/books/{id}/no_translate` — 标记/取消"无需翻译"（仅托管；标记后移出翻译队列）
-- `POST /api/books/{id}/chapters/preview` — 解析待追加的 txt/epub（multipart），
-  返回章节清单（含与已有章节的查重标记 duplicate），不写盘，供前端勾选
-- `POST /api/books/{id}/chapters` — 追加章节（JSON: `{chapters: [{title, body, format}]}`，
-  粘贴文本走单章；文件追加由 preview 勾选后回传）
-- `POST /api/books/{id}/glossary/generate` / `PUT /api/books/{id}/glossary` — 生成 / 保存术语表
-- `GET /api/syosetu/search?q=` — 搜索 syosetu.com 作品
-- `GET /api/syosetu/rankings?period=&genre=&kind=` — 排行榜（发现页；响应附带 periods/genres/kinds 筛选项）
-- `POST /api/syosetu/fetch` — 按作品链接/作品编号建书并后台爬取（逐章落盘）
-- `GET /api/syosetu/status/{book_id}` / `POST /api/syosetu/stop/{book_id}` — 爬取进度 / 停止
-- `POST /api/books/{id}/syosetu/update` — 增量更新，只抓最新章节
-- `GET /api/kakuyomu/search?q=&genre=`（genre 可重复多选）/ `GET /api/kakuyomu/genres`
-- `GET /api/kakuyomu/rankings?genre=&period=&variation=` — 排行榜（发现页；响应附带筛选项）
-- `POST /api/kakuyomu/fetch` — 按作品/章节链接或作品 ID 建书并后台爬取（逐章落盘）
-- `GET /api/kakuyomu/status/{book_id}` / `POST /api/kakuyomu/stop/{book_id}` — 爬取进度 / 停止
-- `POST /api/books/{id}/kakuyomu/update` — 增量更新，只抓最新章节
-- `POST /api/books/{id}/translate`（body: `{chapter_ids?, overwrite?}`）/ `POST .../stop`
-- `GET/POST /api/queue`、`DELETE /api/queue/{book_id}` — 翻译队列查看/入队（同书替换）/移除
-- `POST /api/queue/start` / `POST /api/queue/stop` — 一键开始 / 停止队列（逐本顺序执行）
-- `GET /api/queue/status` — 队列 + 每书章节状态与分段进度（seg_total/seg_done），翻译页 2s 轮询
-- `POST /api/books/{id}/chapters/{cid}/retranslate` — 单章重译
-- `POST /api/books/{id}/title/retranslate` — 重翻书名（不动章节）
-- `POST /api/books/{id}/toc/retranslate` — 重翻目录（全部章节标题；epub 已译章节的 HTML 标题元素同步更新）
-- `GET /api/books/{id}/export?fmt=txt|epub` — 导出
-- `GET/PUT /api/books/{id}/progress` — 阅读进度（body: `{cid, y}`；存 `data/progress.json`）
-- `GET /api/tts/voices` — 听书音色列表（含 default）
-- `POST /api/tts/speak` — 任意文本语音 mp3（body: `{text, voice}`；前端分句后直接发句文本，
-  按 音色+文本 哈希全局缓存，命中直接返回文件）
-- `GET /api/books/{id}/chapters/{cid}/image?src=` — epub 章节内嵌图片
-  （按章节文档路径解析相对 src，从原始 epub 读取）
-- `WebDAV /webdav/` — 只读书库（PROPFIND 列出 EPUB、GET 下载），需在设置中开启
+服务器路由 `/openapi.json` 中可查看所有API.

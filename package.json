@@ -1,5 +1,5 @@
 {
-  "name": "tranlatexbook",
+  "name": "transbook",
   "private": true,
   "workspaces": [
     "frontend"
