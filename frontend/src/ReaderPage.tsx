@@ -88,12 +88,14 @@ export default function ReaderPage() {
 
   // 分句规则：一句（含结尾标点）或连续换行
   const SEG_RE = /[^。！？!?…\n]+[。！？!?…]*|\n+/g
-  interface Seg { t: string; si: number } // si=-1 为纯换行排版段，不朗读；其余按顺序编号
+  // 可朗读判断：至少含一个字母/数字/汉字等文字；纯标点段（如异常分割出的「」、——、※※）不朗读
+  const speakable = (t: string) => /[\p{L}\p{N}]/u.test(t)
+  interface Seg { t: string; si: number } // si=-1 为纯换行/纯标点段，不朗读；其余按顺序编号
   const segments = (): Seg[] => {
     const txt = content().trim()
     if (!txt) return []
     let si = 0
-    return (txt.match(SEG_RE) || []).map(t => ({ t, si: /^\s*$/.test(t) ? -1 : si++ }))
+    return (txt.match(SEG_RE) || []).map(t => ({ t, si: speakable(t) ? si++ : -1 }))
   }
 
   // 当前章节的朗读句清单：txt 由正文直接分句；epub 由拆句后的 HTML 得到（见 epubSeg）
@@ -107,7 +109,7 @@ export default function ReaderPage() {
 
   // epub：用 DOMParser 处理 HTML 字符串（不依赖渲染时机，避免 effect/ref 竞态导致句清单为空），
   // 把文本节点拆成句级 span[data-si] 并同步收集句文本作为朗读清单——渲染的句与朗读的句是同一份数据。
-  // 跳过 style/script/title 内的文本与纯空白节点（不朗读）。
+  // 跳过 style/script/title 内的文本、纯空白节点与纯标点段（不朗读，按原样渲染不高亮）。
   let segEl: HTMLDivElement | undefined
   const splitEpubHtml = (html: string): { html: string; texts: string[] } => {
     const doc = new DOMParser().parseFromString(html, 'text/html')
@@ -127,7 +129,7 @@ export default function ReaderPage() {
       if (!stripped) continue
       const frag = doc.createDocumentFragment()
       for (const part of stripped.match(SEG_RE) || []) {
-        if (/^\s*$/.test(part)) { frag.appendChild(doc.createTextNode(part)); continue }
+        if (!speakable(part)) { frag.appendChild(doc.createTextNode(part)); continue }
         const span = doc.createElement('span')
         span.dataset.si = String(si++)
         span.textContent = part
@@ -226,23 +228,32 @@ export default function ReaderPage() {
     return p
   }
 
-  // 后台预缓存音频（4 并发 worker），从当前朗读位置向后预取，播到时即时出声。
-  // 冷缓存设备（手机首次播放、或音色与桌面端不同导致服务端缓存全部 miss）每句合成
-  // 约 1.5s：预取并发不足、或从第 0 句预取浪费在已播句上，都会被播放追上，
-  // 表现为每句"语音生成中"、读一句停一句。
-  const PREFETCH_WORKERS = 4
+  // 后台预缓存：从当前朗读位置起按 30 句一批发 /api/tts/warm，后端 12 并发合成落盘，
+  // 播放时逐句请求全部毫秒级缓存命中。逐句预取受浏览器同源连接数限制（冷合成每句
+  // 约 1.5s），冷缓存设备（手机首次播放、或音色与桌面端不同导致服务端缓存全 miss）
+  // 会被播放追上，表现为每句"语音生成中"、读一句停一句——故预取走批量接口而非逐句请求。
+  const WARM_BATCH = 30
   const prefetchAll = () => {
     const gen = ++prefetchGen
     const total = sentences().length
     let next = Math.max(ttsIdx(), 0) // 从当前位置向后预取，已播过的句子多数已在缓存
     const worker = async () => {
       while (gen === prefetchGen) {
-        const i = next++
-        if (i >= total) break
-        try { await getAudio(i) } catch { /* 失败句跳过，播到时会重试 */ }
+        const start = next
+        next += WARM_BATCH
+        if (start >= total) break
+        // 已在内存缓存（已合成/在途）的句跳过，只发缺的去后端批量预热
+        const texts: string[] = []
+        for (let i = start; i < Math.min(start + WARM_BATCH, total); i++)
+          if (!audioCache.has(i)) texts.push(sentences()[i])
+        if (!texts.length) continue
+        try {
+          await api.ttsWarm(texts, curVoice())
+        } catch { /* 预热失败不阻塞播放，播到时逐句现合成 */ }
       }
     }
-    for (let w = 0; w < PREFETCH_WORKERS; w++) void worker()
+    void worker()
+    void worker()
   }
 
   const ensureAudio = (): HTMLAudioElement => {

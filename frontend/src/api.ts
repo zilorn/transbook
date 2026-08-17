@@ -132,6 +132,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text, voice }),
     }),
+  ttsWarm: (texts: string[], voice: string): Promise<{ ok: boolean; done: number; failed: number }> =>
+    req('/api/tts/warm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texts, voice }),
+    }),
   chapterImageUrl: (id: string, cid: string, src: string): string =>
     `/api/books/${id}/chapters/${cid}/image?src=${encodeURIComponent(src)}`,
   syosetuSearch: (q: string): Promise<{ results: SyosetuResult[] }> =>

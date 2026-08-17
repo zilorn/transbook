@@ -1024,7 +1024,7 @@ wheels = [
 ]
 
 [[package]]
-name = "tranlatexbook"
+name = "transbook"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

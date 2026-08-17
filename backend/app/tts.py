@@ -6,7 +6,9 @@ data/tts_cache/<sha1(voice+text)>.mp3，命中即直接返回。
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import os
 import uuid
 from pathlib import Path
@@ -14,6 +16,8 @@ from pathlib import Path
 import edge_tts
 
 from . import store
+
+log = logging.getLogger(__name__)
 
 # 常用音色（id → 中文显示名），/api/tts/voices 原样返回，前端不做映射
 VOICES = {
@@ -45,10 +49,12 @@ async def synthesize_text(text: str, voice: str) -> Path:
     if len(text) > MAX_TEXT_CHARS:
         raise ValueError(f"文本过长（>{MAX_TEXT_CHARS} 字）")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    key = hashlib.sha1(f"{voice}\n{text}".encode("utf-8")).hexdigest()
+    key = _cache_key(text, voice)
     cache = CACHE_DIR / f"{key}.mp3"
     if cache.exists():
+        log.info("TTS 缓存命中（%s）: %s", voice, text[:20])
         return cache
+    log.info("TTS 冷合成（%s）: %s", voice, text[:20])
     tmp = cache.with_suffix(f".{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
     try:
         with tmp.open("wb") as f:
@@ -59,3 +65,45 @@ async def synthesize_text(text: str, voice: str) -> Path:
     finally:
         tmp.unlink(missing_ok=True)
     return cache
+
+
+def _cache_key(text: str, voice: str) -> str:
+    return hashlib.sha1(f"{voice}\n{text}".encode("utf-8")).hexdigest()
+
+
+async def warm_cache(texts: list[str], voice: str, concurrency: int = 12) -> tuple[int, int]:
+    """批量合成落盘缓存（听书预取）：返回 (成功数, 失败数)，已在缓存的跳过不计。
+
+    逐句冷合成约 1.5s（edge-tts 建连开销），前端逐句预取受浏览器同源连接数限制
+    跑不过播放；批量接口由后端高并发合成，前端播放时逐句请求全部毫秒级命中。
+    """
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    # 去重 + 跳过已缓存
+    todo: list[str] = []
+    seen: set[str] = set()
+    for t in texts:
+        t = t.strip()
+        if not t or len(t) > MAX_TEXT_CHARS:
+            continue
+        key = _cache_key(t, voice)
+        if key in seen or (CACHE_DIR / f"{key}.mp3").exists():
+            continue
+        seen.add(key)
+        todo.append(t)
+    sem = asyncio.Semaphore(concurrency)
+    done = failed = 0
+    skipped = len(texts) - len(todo)  # 已缓存/重复/空的句数
+
+    async def one(text: str) -> None:
+        nonlocal done, failed
+        async with sem:
+            try:
+                await synthesize_text(text, voice)
+                done += 1
+            except Exception:
+                failed += 1  # 失败句不阻塞整批，播到时前端会逐句重试
+
+    await asyncio.gather(*(one(t) for t in todo))
+    log.info("TTS 批量预热（%s）: 新合成 %d，缓存命中跳过 %d，失败 %d",
+             voice, done, skipped, failed)
+    return done, failed

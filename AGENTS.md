@@ -50,7 +50,7 @@ cd frontend && bun run typecheck    # TypeScript 类型检查（tsc --noEmit）
 uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 ```
 
-注意：本机 8000 端口被其他服务占用，后端固定用 **8300**。生产模式由 FastAPI 托管
+注意：后端固定用 **8300**。生产模式由 FastAPI 托管
 `frontend/dist`（`main.py` 末尾 StaticFiles 挂载），前端只需访问 8300 一个端口；
 仅开发调试时才单独跑 `cd frontend && bun run dev`（vite 代理 `/api` → 8300）。
 后端监听 `0.0.0.0`，WebDAV 书库（及 API）可从局域网访问；WebDAV 无认证，勿暴露到公网。
@@ -66,20 +66,10 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   分段数尽量少），发给模型时带 `【N】` 编号标记，响应按编号解析回原文位置；
   缺失编号重试一次，仍缺失则保留原文。章节标题和书名用单独的提示词翻译，不走正文分段。
   翻译中的章节实时维护 `seg_total`/`seg_done`（正文分段数 + 1 个标题段），供前端做分段进度可视化。
-- **无需翻译标记**：`book.json` 的 `no_translate` 布尔字段（缺省 false）表示"仅托管"
-  （阅读/导出/WebDAV，如托管本身已是译文的书）。标记后所有翻译入口（整书翻译、单章重译、
-  重翻书名/目录、生成术语表、入队）一律 400 拒绝；标记时自动移出翻译队列，
-  队列执行器遇到残留条目也会跳过出队。详情页有开关按钮，书库/详情页显示琥珀色徽章；
-  标记后前端隐藏全部翻译相关 UI（进度条、状态徽章、章节状态/操作列、术语表标签页）。
 - **并发**：`translator.KeyPool` 把每个 key 按自身并发数放入 `asyncio.Queue` 槽位，
   取用即占用、归还即释放，请求按 key 自动分摊，总并发 = 各 key 有效并发之和。
   章节之间并发、章节内分段并发，按索引重组，不会错乱。停止通过 `asyncio.Event` 协作式中断。
   注意每次翻译任务（含手动单章重译）各自建池，并行任务的总并发会叠加。
-- **翻译队列**：`data/queue.json` 持久化 `[{book_id, chapter_ids, overwrite, added_at}]`，
-  同书重复入队时替换旧条目。`translator._run_queue` 逐本顺序执行（书内仍并发），
-  完成出队；停止时当前书保留在队列中，下次"一键开始"可继续。详情页的"排队翻译"只入队，
-  统一在翻译队列页（`TranslatePage.tsx`）启动/停止并做进度可视化（每书一个可折叠收纳盒，
-  章节小方块灰/蓝/绿/红四态 + 方块下方分段进度条）。
 - **txt 分章**：`parsing.CHAPTER_PATTERNS` 按优先级匹配（第X章/卷/回、Chapter N、序/尾声、
   纯数字编号等），数值型要求至少出现 2 次才采用；识别不到则整本作为一章。
   txt 解码依次尝试 utf-8 → gb18030 → utf-16 → latin-1。
@@ -92,15 +82,6 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   3 次（规避风控）；每个站点模块各持有一个 HttpGate 实例。抓取任务生命周期统一由
   `tasks.CrawlRunner` 管理：站点模块注入 `source_key`/`fetch_info`/`fetch_chapter` 回调，
   抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
-- **阅读器**：`ReaderPage.tsx`，全屏路由 `/books/:id/read(/:cid)`（App.tsx 的 Layout 按路径
-  识别，不渲染侧边栏）。内容取译文优先（`status === 'done'` 先试 `?translated=true`，
-  404 回退原文）；epub 章节的 `<img>` 相对路径重写为章节图片接口（外链图保留、
-  加载失败隐藏），点击可全屏预览；渲染前去掉正文首个 h1-h3（与阅读器标题栏重复）。
-  阅读进度存后端 `data/progress.json`（`{book_id: {cid, y}}`，含滚动位置，
-  `GET/PUT /api/books/{id}/progress`，滚动 400ms 节流保存），前端首次打开时把旧版
-  localStorage（`reader-progress:<bookId>`）迁移到后端；字号/主题/音色设置
-  （`reader-settings`）仍存 localStorage；进入阅读页自动续读。
-  主题（白纸/护眼/夜间）整页换背景，工具栏按钮与音色下拉用 `.reader-bar` 继承主题色。
 - **听书（edge-tts，逐句）**：**前端自行分句、直接把每句文本发给后端合成**——渲染的句
   与朗读的句天然是同一份，逐句高亮必然对齐，后端不参与分句/对齐。`POST /api/tts/speak`
   （`{text, voice}`）合成任意文本为 mp3，按 `sha1(音色+文本)` 全局缓存到
@@ -110,11 +91,16 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   `span[data-si]`；epub 用 `splitEpubHtml`（DOMParser 处理 HTML 字符串，按章节缓存）
   同步拆出句级 span 并收集句文本——**不依赖渲染后 DOM 的 effect/ref 时序**（曾因竞态
   导致句清单为空），渲染的句与朗读的句是同一份数据；拆句跳过 style/script/title
-  内的文本与纯空白节点。
+  内的文本与纯空白节点。纯标点段（不含任何字母/数字/汉字，如异常分割出的
+  「」、——、※※）也不朗读：txt 记 si=-1、epub 按原样渲染不包 span，
+  均不进朗读句清单（`speakable` 判断）。
   播放走内存 Blob 缓存（`audioCache`：句号 → 合成 Promise，失败不缓存）：播放当前句时
-  预取随后 5 句，`prefetchAll` 后台 4 并发、**从当前朗读位置向后**预缓存本章
-  （跳句后从新位置重启预取；冷缓存设备每句合成约 1.5s，从头预取或并发不足会被播放追上，
-  表现为每句"语音生成中"）；合成/播放失败自动跳下一句
+  逐句预取随后 5 句（兜底），主力预取走**批量预热**：`prefetchAll` 从当前朗读位置起
+  按 30 句/批发 `POST /api/tts/warm`，后端 `tts.warm_cache` 以 12 并发合成落盘
+  （跳句后从新位置重启预取；切章/换音色由 `prefetchGen` 作废旧批）。
+  逐句预取受浏览器同源连接数限制，冷合成每句约 1.5s，冷缓存设备（手机首次播放、
+  音色与桌面端不同导致服务端缓存全 miss）会被播放追上，表现为每句"语音生成中"——
+  批量预热不受浏览器连接数限制；合成/播放失败自动跳下一句
   （连续失败 5 句才停止），播完自动接下一句/下一章；当前朗读句加 `.tts-active` 高亮
   并自动滚动到视野中部；切章/换音色时若处于播放意图（`wantPlay`）
   自动换源续播（换音色重读当前句）。朗读句清单以 `contentCid` 门控：content 必须属于
@@ -128,11 +114,6 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   播放控件是右下悬浮球（SVG 播放/暂停图标）+ 上方悬浮卡片（进度/上一句/下一句/倍速/音色/关闭），
   上一句/下一句（`skipSentence`）播放中跳句重读（递增 `playGen` 作废在途合成），暂停中只移动高亮位置；
   浮起避开手机底部导航栏遮挡，不再是贴底通栏。
-- **章节图片**：`GET .../image?src=` 按 `parsing.epub_chapter_files`（章节 id → epub 内部
-  文档路径，与 parse_epub 编号一致，按 mtime 缓存）解析 `<img>` 相对 src 后从原始
-  epub zip 读取；路径越界 400。部分 epub 的 HTML 相对路径与 zip 结构不一致，
-  按同名文件兜底（多个同名取与解析路径后缀重合最长者）。仅支持原始上传的 epub
-  （追加的 epub 章节不在 zip 内，图片加载失败前端隐藏）。
 - **界面中文化**：搜索/排行榜返回的 `status`（已完结/连载中/短篇）、`genre`、筛选项
   显示名一律后端出中文（`syosetu._GENRE_TEXT_ZH`、`kakuyomu.GENRES` 值），前端不做映射。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，

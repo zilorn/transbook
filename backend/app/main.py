@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import mimetypes
 import posixpath
 import re
@@ -16,6 +17,10 @@ from pydantic import BaseModel
 
 from . import parsing, store, translator, tts, webdav
 from .crawlers import kakuyomu, syosetu
+
+# uvicorn 只配置自己的 logger，应用 logger（app.*）传播到 root 后无 handler 会被丢弃，
+# 这里给 root 装一个 handler 让应用日志（如 TTS 缓存命中）能输出到控制台
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 app = FastAPI(title="TranLatexBook")
 app.include_router(webdav.router)
@@ -344,6 +349,30 @@ def _check_voice(voice: str) -> str:
 class TtsSpeakReq(BaseModel):
     text: str
     voice: str = ""
+
+
+class TtsWarmReq(BaseModel):
+    texts: list[str]
+    voice: str = ""
+
+
+@app.post("/api/tts/warm")
+async def tts_warm(req: TtsWarmReq):
+    """听书批量预热：一批句文本高并发合成落盘缓存，前端播放时逐句请求全部毫秒级命中。
+
+    逐句冷合成约 1.5s，浏览器同源连接数有限，逐句预取在冷缓存设备上跑不过播放；
+    批量预热由后端 asyncio 高并发执行，不受浏览器连接数限制。
+    """
+    voice = _check_voice(req.voice)
+    if len(req.texts) > 100:
+        raise HTTPException(400, "单批最多 100 句")
+    if any(len(t) > tts.MAX_TEXT_CHARS for t in req.texts):
+        raise HTTPException(400, f"存在超长文本（>{tts.MAX_TEXT_CHARS} 字）")
+    try:
+        done, failed = await asyncio.wait_for(tts.warm_cache(req.texts, voice), timeout=180)
+    except TimeoutError:
+        raise HTTPException(504, "批量合成超时")
+    return {"ok": True, "done": done, "failed": failed}
 
 
 @app.post("/api/tts/speak")
