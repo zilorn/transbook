@@ -332,6 +332,11 @@ export default function BookDetail() {
               </div>
             </Show>
             <div class="flex gap-2.5 items-center flex-wrap">
+              <button class="primary" disabled={b().chapters.length === 0}
+                title="进入阅读器（自动续读上次位置）"
+                onClick={() => navigate(`/books/${b().id}/read`)}>
+                阅读
+              </button>
               <Show when={b().source}>
                 <button disabled={busy() || b().running || updating()}
                   title="从来源站点检查并抓取最新章节"
@@ -458,8 +463,8 @@ export default function BookDetail() {
                         <td class="truncate">{n}</td>
                         <td class="overflow-hidden">
                           <button class="link p-0 block w-full truncate text-left text-[14px]"
-                            title={c.title_translated ? '预览译文' : '预览原文'}
-                            onClick={() => openPreview(c, !!c.title_translated)}>
+                            title={c.title_translated ? '阅读译文' : '阅读原文'}
+                            onClick={() => navigate(`/books/${b().id}/read/${c.id}`)}>
                             {c.title_translated || c.title}
                           </button>
                           <Show when={c.title_translated && c.title_translated !== c.title}>

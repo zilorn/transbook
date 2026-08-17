@@ -106,4 +106,16 @@
   .preview-html img {
     max-width: 100%;
   }
+
+  /* 阅读器工具栏/目录内的按钮跟随阅读主题色，不用默认白底 */
+  .reader-bar button {
+    background: transparent;
+    border-color: rgba(128, 128, 128, 0.35);
+    color: inherit;
+  }
+  .reader-bar button.primary {
+    background: #2563eb;
+    border-color: #2563eb;
+    color: #fff;
+  }
 }

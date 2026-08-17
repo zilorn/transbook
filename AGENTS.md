@@ -30,12 +30,12 @@ backend/
     webdav.py      # 只读 WebDAV（/webdav/）：有章节的书打包 EPUB 暴露给阅读软件
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
-  src/index.tsx  App.tsx（HashRouter + 侧边栏布局）  state.ts（全局 config/设置弹窗信号）
-  BookList.tsx  BookDetail.tsx  TranslatePage.tsx  SearchPage.tsx  DiscoverPage.tsx  Settings.tsx
+  src/index.tsx  App.tsx（HashRouter + 响应式布局：桌面侧边栏，移动端顶栏+抽屉菜单）  state.ts（全局 config/设置弹窗信号）
+  BookList.tsx  BookDetail.tsx  ReaderPage.tsx（阅读器）  TranslatePage.tsx  SearchPage.tsx  DiscoverPage.tsx  Settings.tsx
   CrawlJobs.tsx（搜索页/发现页共用的爬取任务列表 + 2s 轮询）  api.ts  types.ts
-  路由：/ 书库、/books/:id 书籍详情、/queue 翻译队列、/search 小说搜索（爬虫）、/discover 发现
-  （排行榜）；用 HashRouter 是因后端 StaticFiles 无 SPA 回退，history 模式刷新深链接会 404。
-  页面间跳转一律 useNavigate。
+  路由：/ 书库、/books/:id 书籍详情、/books/:id/read(/:cid) 阅读器、/queue 翻译队列、/search 小说搜索
+  （爬虫）、/discover 发现（排行榜）；用 HashRouter 是因后端 StaticFiles 无 SPA 回退，
+  history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
 ```
 
 ## 常用命令
@@ -115,6 +115,12 @@ uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
   `rankings(genre, period, variation)` 抓 `/rankings/{genre}/{period}?work_variation=`，
   页面类名为构建期哈希，数据解析自 `__NEXT_DATA__` 内嵌 JSON 的 `__APOLLO_STATE__`
   （ROOT_QUERY 的 `rankedWorks(...)` 键 → Work/UserAccount 归一化实体），每榜 100 条。
+- **阅读器**：`ReaderPage.tsx`，全屏路由 `/books/:id/read(/:cid)`（App.tsx 的 Layout 按路径
+  识别，不渲染侧边栏）。内容取译文优先（`status === 'done'` 先试 `?translated=true`，
+  404 回退原文）；epub 章节渲染前去掉 `<img>`（epub 内部相对路径无法加载）和正文首个
+  h1-h3（与阅读器标题栏重复）。阅读进度（`reader-progress:<bookId>` = `{cid, y}`，含滚动
+  位置）与字号/主题设置（`reader-settings`）存 localStorage；进入阅读页自动续读。
+  主题（白纸/护眼/夜间）整页换背景，工具栏按钮用 `.reader-bar` 继承主题色。
 - **界面中文化**：搜索/排行榜返回的 `status`（已完结/连载中/短篇）、`genre`、筛选项
   显示名一律后端出中文（`syosetu._GENRE_TEXT_ZH`、`kakuyomu.GENRES` 值），前端不做映射。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，
