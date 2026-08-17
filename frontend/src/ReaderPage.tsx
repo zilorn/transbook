@@ -76,6 +76,7 @@ export default function ReaderPage() {
   const [voiceDefault, setVoiceDefault] = createSignal('')
   const [ttsIdx, setTtsIdx] = createSignal(-1) // 当前朗读句下标（-1 = 未在朗读）
   const [ttsCtlOpen, setTtsCtlOpen] = createSignal(true) // 悬浮球控制面板展开/收缩
+  const [ttsFollow, setTtsFollow] = createSignal(true) // 自动跟读（滚动跟随朗读句）：用户手动滚动后停止跟读（朗读与高亮继续），控制面板"返回跟读"恢复
   // Web Audio 播放：HTMLAudio 在移动端每次换 src/play 都要重建媒体管线（数百 ms），
   // 双元素预载也不会提前解码，句间必停顿；Web Audio 提前把下一句解码成 AudioBuffer，
   // 在当前句结束时刻 start(at) 精确调度（采样级无缝），暂停 = ctx.suspend() 冻结时钟。
@@ -449,6 +450,7 @@ export default function ReaderPage() {
     void actx?.suspend()
     setTtsOpen(false)
     setTtsIdx(-1)
+    setTtsFollow(true)
   }
 
   // 切章/换音色：清空本章音频缓存与朗读位置，作废在途的合成等待与调度
@@ -460,6 +462,7 @@ export default function ReaderPage() {
       playGen++
       killPlayback()
       setTtsIdx(-1)
+      setTtsFollow(true)
       consecFails = 0
     }
     return key
@@ -491,10 +494,10 @@ export default function ReaderPage() {
     return r
   }, 0)
 
-  // 朗读句自动滚动到视野中部
+  // 朗读句自动滚动到视野中部（ttsFollow 关闭时只高亮不滚动）
   createEffect(() => {
     const i = ttsIdx()
-    if (i >= 0 && ttsOpen())
+    if (i >= 0 && ttsOpen() && ttsFollow())
       document.querySelector(`[data-si="${i}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   })
 
@@ -517,6 +520,14 @@ export default function ReaderPage() {
     if (c) saveProgress(c.id, window.scrollY)
   }
 
+  // 用户手动滚动（滚轮/触摸/键盘翻页键）时停止自动跟读，朗读与高亮不受影响；
+  // 程序性 smooth 滚动不触发这些事件，不会误停
+  const onUserScroll = () => {
+    if (ttsOpen() && ttsFollow() && ttsIdx() >= 0) setTtsFollow(false)
+  }
+  // 控制面板"返回跟读"：恢复跟读；置回 true 会重触上面的滚动 effect，自动滚回当前朗读句
+  const resumeFollow = () => setTtsFollow(true)
+
   const goChapter = (i: number) => {
     const cs = chapters()
     if (i < 0 || i >= cs.length) return
@@ -530,10 +541,14 @@ export default function ReaderPage() {
     if (tocOpen() || panelOpen()) return
     if (e.key === 'ArrowLeft') prev()
     else if (e.key === 'ArrowRight') next()
+    // 空格/PageUp/PageDown/上下方向键/Home/End 会原生滚动页面，视为手动滚动
+    else if ([' ', 'PageUp', 'PageDown', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) onUserScroll()
   }
 
   onMount(async () => {
     window.addEventListener('scroll', onScroll, { passive: true })
+    window.addEventListener('wheel', onUserScroll, { passive: true })
+    window.addEventListener('touchmove', onUserScroll, { passive: true })
     window.addEventListener('keydown', onKey)
     void api.ttsVoices()
       .then((v) => { setVoices(v.voices); setVoiceDefault(v.default) })
@@ -568,6 +583,8 @@ export default function ReaderPage() {
   })
   onCleanup(() => {
     window.removeEventListener('scroll', onScroll)
+    window.removeEventListener('wheel', onUserScroll)
+    window.removeEventListener('touchmove', onUserScroll)
     window.removeEventListener('keydown', onKey)
     document.body.style.background = ''
     wantPlay = false
@@ -726,6 +743,18 @@ export default function ReaderPage() {
                   (chapter()?.title_translated || chapter()?.title || '')
                 ))}
               </div>
+              <Show when={!ttsFollow()}>
+                <button class="small w-full mb-2 flex items-center justify-center gap-1"
+                  title="回到当前朗读句并恢复自动滚动" onClick={resumeFollow}>
+                  <svg class="w-[14px] h-[14px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" />
+                    <line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" />
+                  </svg>
+                  返回跟读
+                </button>
+              </Show>
               <div class="flex gap-2 mb-2">
                 <button class="small flex-1 flex items-center justify-center gap-1" disabled={!sentences().length}
                   title="上一句" onClick={() => skipSentence(-1)}>
