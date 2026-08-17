@@ -75,6 +75,7 @@ export default function ReaderPage() {
   const [voices, setVoices] = createSignal<Record<string, string>>({})
   const [voiceDefault, setVoiceDefault] = createSignal('')
   const [ttsIdx, setTtsIdx] = createSignal(-1) // 当前朗读句下标（-1 = 未在朗读）
+  const [ttsCtlOpen, setTtsCtlOpen] = createSignal(true) // 悬浮球控制面板展开/收缩
   // Web Audio 播放：HTMLAudio 在移动端每次换 src/play 都要重建媒体管线（数百 ms），
   // 双元素预载也不会提前解码，句间必停顿；Web Audio 提前把下一句解码成 AudioBuffer，
   // 在当前句结束时刻 start(at) 精确调度（采样级无缝），暂停 = ctx.suspend() 冻结时钟。
@@ -628,7 +629,7 @@ export default function ReaderPage() {
 
       {/* 正文 */}
       <div class="max-w-[800px] mx-auto px-4 md:px-6 pt-5"
-        style={{ 'padding-bottom': ttsOpen() ? '120px' : '32px' }}>
+        style={{ 'padding-bottom': ttsOpen() ? (ttsCtlOpen() ? '180px' : '100px') : '32px' }}>
         <Show when={!loading()} fallback={<p class="text-center py-[60px] opacity-60">加载中…</p>}>
           <Show when={!error()} fallback={
             <div class="text-center py-[60px]">
@@ -710,63 +711,94 @@ export default function ReaderPage() {
         </div>
       </Show>
 
-      {/* 听书悬浮球：球体播放/暂停（SVG 图标），上方悬浮卡片放进度/倍速/音色/关闭。
+      {/* 听书悬浮球：球体播放/暂停（SVG 图标），同组小圆钮为收缩/展开控制面板与关闭听书，
+          控制面板（进度/上一句/下一句/倍速/音色）可收缩进悬浮球。
           浮起一段距离，避开手机底部导航栏/浏览器工具栏的遮挡 */}
       <Show when={ttsOpen()}>
         <div class="fixed z-20 right-3 flex flex-col items-end gap-2"
           style={{ bottom: 'calc(88px + env(safe-area-inset-bottom, 0px))' }}>
-          <div class="reader-bar rounded-[12px] border shadow-lg p-2.5 w-[228px]"
-            style={{ background: theme().bg, 'border-color': theme().line }}>
-            <div class="flex items-center gap-1 mb-2">
-              <span class="flex-1 min-w-0 truncate text-[12px] opacity-60">
+          <Show when={ttsCtlOpen()}>
+            <div class="reader-bar rounded-[12px] border shadow-lg p-2.5 w-[228px]"
+              style={{ background: theme().bg, 'border-color': theme().line }}>
+              <div class="mb-2 truncate text-center text-[12px] opacity-60">
                 {ttsError() || (ttsBusy() ? '语音生成中…' : (
                   (ttsIdx() >= 0 ? `${ttsIdx() + 1}/${sentences().length} · ` : '') +
                   (chapter()?.title_translated || chapter()?.title || '')
                 ))}
-              </span>
-              <button class="border-0 px-1 shrink-0" title="关闭听书" onClick={closeTts}>
+              </div>
+              <div class="flex gap-2 mb-2">
+                <button class="small flex-1 flex items-center justify-center gap-1" disabled={!sentences().length}
+                  title="上一句" onClick={() => skipSentence(-1)}>
+                  <svg class="w-[14px] h-[14px]" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="19 20 9 12 19 4 19 20" /><rect x="5" y="4" width="2.5" height="16" />
+                  </svg>
+                  上一句
+                </button>
+                <button class="small flex-1 flex items-center justify-center gap-1" disabled={!sentences().length}
+                  title="下一句" onClick={() => skipSentence(1)}>
+                  下一句
+                  <svg class="w-[14px] h-[14px]" viewBox="0 0 24 24" fill="currentColor">
+                    <polygon points="5 4 15 12 5 20 5 4" /><rect x="16.5" y="4" width="2.5" height="16" />
+                  </svg>
+                </button>
+              </div>
+              <div class="flex gap-2">
+                <select class="shrink-0 w-[62px]" title="倍速"
+                  value={String(settings().rate)}
+                  onChange={(e) => setSettings(s => ({ ...s, rate: Number(e.currentTarget.value) }))}>
+                  <For each={RATES}>
+                    {(r) => <option value={r}>{r}×</option>}
+                  </For>
+                </select>
+                <select class="flex-1 min-w-0"
+                  value={settings().voice || voiceDefault()}
+                  onChange={(e) => setSettings(s => ({ ...s, voice: e.currentTarget.value }))}>
+                  <For each={Object.entries(voices())}>
+                    {([id, name]) => <option value={id}>{name}</option>}
+                  </For>
+                </select>
+              </div>
+            </div>
+          </Show>
+          <div class="flex items-center gap-2">
+            <button class="reader-bar rounded-full w-[36px] h-[36px] shadow-lg flex items-center justify-center p-0 border"
+              style={{ background: theme().bg, 'border-color': theme().line }}
+              title="关闭听书" onClick={closeTts}>
+              <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+              </svg>
+            </button>
+            <button class="reader-bar rounded-full w-[36px] h-[36px] shadow-lg flex items-center justify-center p-0 border"
+              style={{ background: theme().bg, 'border-color': theme().line }}
+              title={ttsCtlOpen() ? '收起控制' : '展开控制'}
+              onClick={() => setTtsCtlOpen(v => !v)}>
+              <Show when={ttsCtlOpen()} fallback={
                 <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                   stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <line x1="18" x2="6" y1="6" y2="18" /><line x1="6" x2="18" y1="6" y2="18" />
+                  <polyline points="18 15 12 9 6 15" />
                 </svg>
-              </button>
-            </div>
-            <div class="flex gap-2 mb-2">
-              <button class="small flex-1" disabled={!sentences().length}
-                title="上一句" onClick={() => skipSentence(-1)}>⏮ 上一句</button>
-              <button class="small flex-1" disabled={!sentences().length}
-                title="下一句" onClick={() => skipSentence(1)}>下一句 ⏭</button>
-            </div>
-            <div class="flex gap-2">
-              <select class="shrink-0 w-[62px]" title="倍速"
-                value={String(settings().rate)}
-                onChange={(e) => setSettings(s => ({ ...s, rate: Number(e.currentTarget.value) }))}>
-                <For each={RATES}>
-                  {(r) => <option value={r}>{r}×</option>}
-                </For>
-              </select>
-              <select class="flex-1 min-w-0"
-                value={settings().voice || voiceDefault()}
-                onChange={(e) => setSettings(s => ({ ...s, voice: e.currentTarget.value }))}>
-                <For each={Object.entries(voices())}>
-                  {([id, name]) => <option value={id}>{name}</option>}
-                </For>
-              </select>
-            </div>
+              }>
+                <svg class="w-[16px] h-[16px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </Show>
+            </button>
+            <button class="primary rounded-full w-[52px] h-[52px] shadow-lg flex items-center justify-center p-0"
+              title={ttsPlaying() ? '暂停' : '播放'}
+              onClick={toggleTts}>
+              <Show when={ttsPlaying()} fallback={
+                <svg class="w-[22px] h-[22px] translate-x-[2px]" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="6 4 20 12 6 20 6 4" />
+                </svg>
+              }>
+                <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
+                </svg>
+              </Show>
+            </button>
           </div>
-          <button class="primary rounded-full w-[52px] h-[52px] shadow-lg flex items-center justify-center p-0"
-            title={ttsPlaying() ? '暂停' : '播放'}
-            onClick={toggleTts}>
-            <Show when={ttsPlaying()} fallback={
-              <svg class="w-[22px] h-[22px] translate-x-[2px]" viewBox="0 0 24 24" fill="currentColor">
-                <polygon points="6 4 20 12 6 20 6 4" />
-              </svg>
-            }>
-              <svg class="w-[22px] h-[22px]" viewBox="0 0 24 24" fill="currentColor">
-                <rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" />
-              </svg>
-            </Show>
-          </button>
         </div>
       </Show>
 
