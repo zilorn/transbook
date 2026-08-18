@@ -95,6 +95,9 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   内的文本与纯空白节点。纯标点段（不含任何字母/数字/汉字，如异常分割出的
   「」、——、※※）也不朗读：txt 记 si=-1、epub 按原样渲染不包 span，
   均不进朗读句清单（`speakable` 判断）。
+  章节标题也朗读：可朗读的标题（`titleText`，译名优先）固定为朗读句清单第 0 句，
+  正文句号从 1 起编（`titleOffset`；epub 拆句缓存 key 含 titleOffset），
+  正文 `<h1>` 标题带 `data-si="0"` 参与高亮/滚动（标题不可朗读时不编号、正文仍从 0 起）。
   播放走内存 Blob 缓存（`audioCache`：句号 → 合成 Promise，失败不缓存）：播放当前句时
   逐句预取随后 5 句（兜底），主力预取走**批量预热**：`prefetchAll` 从当前朗读位置起
   按 30 句/批发 `POST /api/tts/warm`，后端 `tts.warm_cache` 以 12 并发合成落盘

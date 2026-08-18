@@ -102,20 +102,31 @@ export default function ReaderPage() {
   // 可朗读判断：至少含一个字母/数字/汉字等文字；纯标点段（如异常分割出的「」、——、※※）不朗读
   const speakable = (t: string) => /[\p{L}\p{N}]/u.test(t)
   interface Seg { t: string; si: number } // si=-1 为纯换行/纯标点段，不朗读；其余按顺序编号
+  // 章节标题也朗读：固定为第 0 句（正文 h1 加 span[data-si="0"] 参与高亮），正文句号从 1 起编
+  const titleText = (): string => {
+    const c = chapter()
+    if (!c || contentCid() !== c.id) return ''
+    const t = (c.title_translated || c.title || '').trim()
+    return speakable(t) ? t : ''
+  }
+  const titleOffset = () => (titleText() ? 1 : 0)
   const segments = (): Seg[] => {
     const txt = content().trim()
     if (!txt) return []
-    let si = 0
+    let si = titleOffset()
     return (txt.match(SEG_RE) || []).map(t => ({ t, si: speakable(t) ? si++ : -1 }))
   }
 
-  // 当前章节的朗读句清单：txt 由正文直接分句；epub 由拆句后的 HTML 得到（见 epubSeg）
+  // 当前章节的朗读句清单：标题（可朗读时）为第 0 句，随后 txt 由正文直接分句、
+  // epub 由拆句后的 HTML 得到（见 epubSeg）。
   // content 必须属于当前章节：切章后 loadChapter 还在等网络时 content 仍是上一章，
   // 不门控的话自动续播会拿上一章的句子接着读
   const sentences = (): string[] => {
     const c = chapter()
     if (!c || contentCid() !== c.id) return []
-    return c.format === 'epub' ? (epubSeg()?.texts ?? []) : segments().filter(s => s.si >= 0).map(s => s.t)
+    const body = c.format === 'epub' ? (epubSeg()?.texts ?? []) : segments().filter(s => s.si >= 0).map(s => s.t)
+    const t = titleText()
+    return t ? [t, ...body] : body
   }
 
   // epub：用 DOMParser 处理 HTML 字符串（不依赖渲染时机，避免 effect/ref 竞态导致句清单为空），
@@ -133,7 +144,7 @@ export default function ReaderPage() {
     })
     const nodes: Text[] = []
     while (walker.nextNode()) nodes.push(walker.currentNode as Text)
-    let si = 0
+    let si = titleOffset()
     const texts: string[] = []
     for (const node of nodes) {
       const stripped = node.data.trim()
@@ -158,7 +169,7 @@ export default function ReaderPage() {
     const c = chapter()
     const h = content()
     if (!c || c.format !== 'epub' || !h) return null
-    const key = `${c.id}:${h.length}`
+    const key = `${c.id}:${h.length}:${titleOffset()}`
     if (epubSegCache?.key !== key) epubSegCache = { key, v: splitEpubHtml(h) }
     return epubSegCache.v
   }
@@ -833,7 +844,9 @@ export default function ReaderPage() {
             <Show when={chapter()}>
               {(c) => (
                 <>
-                  <h1 class="text-[1.35em] font-bold mt-0 mb-6 leading-[1.5] break-all">
+                  <h1 class="text-[1.35em] font-bold mt-0 mb-6 leading-[1.5] break-all"
+                    data-si={titleOffset() ? 0 : undefined}
+                    classList={{ 'tts-active': titleOffset() === 1 && ttsIdx() === 0, 'bm-mark': titleOffset() === 1 && bmSis().has(0) }}>
                     {c().title_translated || c().title}
                   </h1>
                   {/* 听书逐句高亮：txt 始终按句渲染 span；epub 渲染的是 epubSeg 拆句后的
