@@ -2,6 +2,7 @@ import { A, HashRouter, Route, useLocation } from '@solidjs/router'
 import { createSignal, lazy, onMount, Show, type ParentProps } from 'solid-js'
 import { config, loadConfig, setSettingsOpen, settingsOpen } from './state'
 import Settings from './Settings'
+import UpdatePrompt from './UpdatePrompt'
 
 const BookList = lazy(() => import('./BookList'))
 const BookDetail = lazy(() => import('./BookDetail'))
@@ -83,6 +84,8 @@ function Layout(props: ParentProps) {
   const [menuOpen, setMenuOpen] = createSignal(false)
 
   return (
+    <>
+    <UpdatePrompt />
     <Show when={!isReader()} fallback={<>{props.children}</>}>
       <div class="flex min-h-screen">
         {/* 桌面侧边栏 */}
@@ -146,6 +149,7 @@ function Layout(props: ParentProps) {
         </Show>
       </div>
     </Show>
+    </>
   )
 }
 

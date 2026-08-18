@@ -29,11 +29,12 @@ backend/
       syosetu.py   # syosetu.com：搜索/排行榜/目录/正文解析（站点专属逻辑）
       kakuyomu.py  # kakuyomu.jp：GraphQL 搜索/目录 + __NEXT_DATA__ 排行榜 + HTML 正文解析（站点专属逻辑）
     webdav.py      # 只读 WebDAV（/webdav/）：有章节的书打包 EPUB 暴露给阅读软件
+    updater.py     # 自动更新（GitHub）：冷却制检查 commit 差异，用户确认后下载源码/构建前端/替换代码并重启
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
   src/index.tsx  App.tsx（HashRouter + 响应式布局：桌面侧边栏，移动端顶栏+抽屉菜单）  state.ts（全局 config/设置弹窗信号）
   BookList.tsx  BookDetail.tsx  ReaderPage.tsx（阅读器）  TranslatePage.tsx  SearchPage.tsx  DiscoverPage.tsx  Settings.tsx
-  CrawlJobs.tsx（搜索页/发现页共用的爬取任务列表 + 2s 轮询）  api.ts  types.ts
+  CrawlJobs.tsx（搜索页/发现页共用的爬取任务列表 + 2s 轮询）  UpdatePrompt.tsx（更新弹窗）  api.ts  types.ts
   路由：/ 书库、/books/:id 书籍详情、/books/:id/read(/:cid) 阅读器、/queue 翻译队列、/search 小说搜索
   （爬虫）、/discover 发现（排行榜）；用 HashRouter 是因后端 StaticFiles 无 SPA 回退，
   history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
@@ -49,6 +50,8 @@ cd frontend && bun run build        # 构建前端到 frontend/dist（后端会�
 cd frontend && bun run typecheck    # TypeScript 类型检查（tsc --noEmit）
 uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 docker compose up -d --build              # Docker 一键部署：镜像内构建前端，数据卷挂 ./backend/data
+                                          # 可用 GIT_COMMIT=$(git rev-parse HEAD) GIT_REPO=$(git config --get remote.origin.url)
+                                          # 前缀注入构建信息（供容器内自动更新对比 commit），不传则首次检查收敛到最新
 ```
 
 注意：后端固定用 **8300**。生产模式由 FastAPI 托管
@@ -146,6 +149,18 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   标记 `no_translate`（仅托管）且原始文件为 epub 的书直接返回原始 `source.epub`
   （`dav_file_path`），不重新打包；txt 源仍需打包。
   无认证，仅供局域网使用。
+- **自动更新（GitHub）**：不做定时轮询。前端进入页面时 `POST /api/update/check`
+  （`UpdatePrompt.tsx` 挂载于 Layout），服务端受 `updater.CHECK_COOLDOWN`（30 分钟）冷却限制
+  不重复请求 GitHub；设置页「检查更新」按钮走 `force=true` 绕过冷却。发现远端 commit 与本地
+  不一致只标记 `update_available` 并弹窗提示，用户点击「立即更新」才执行 `POST /api/update/apply`：
+  下载 tarball → 暂存目录 `bun install` + `bun run build` 构建前端 → `uv sync` 同步依赖 →
+  替换 `backend/app` 与 `frontend/dist` → SIGTERM 自杀，Docker 由 `restart: unless-stopped`
+  拉起完成热更新（容器文件系统跨重启保留；非 Docker 只替换文件，提示手动重启）。
+  当前版本 commit 优先级：`data/update_state.json` → 镜像 `build-info.json`
+  （Dockerfile 构建参数 GIT_COMMIT/GIT_REPO 写入；容器内无 .git）→ 本地 git。
+  更新源仓库取 `config.update_repo`（设置页可配），留空回退 build-info/git remote/默认
+  `zilorn/transbook`；私有仓库配 `config.github_token`（GET /api/config 脱敏回显）。
+  运行时镜像内置 bun（Dockerfile 从 oven/bun 复制），更新构建无需外部环境。
 
 ## API 一览
 

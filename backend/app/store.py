@@ -24,6 +24,9 @@ DEFAULT_CONFIG = {
     "concurrency": 5,
     "max_segment_chars": 8000,
     "webdav_enabled": False,
+    "update_repo": "",
+    "update_branch": "main",
+    "github_token": "",
 }
 
 _lock = threading.Lock()

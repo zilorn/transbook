@@ -11,7 +11,15 @@ RUN bun run build
 # ---------- 后端运行 ----------
 FROM python:3.12-slim AS runtime
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+# 自动更新需要在容器内重新构建前端
+COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
+
+# 记录构建时的 commit/仓库，供自动更新与远端对比（容器内无 .git）；
+# 未传参时留空，自动更新会以"未知版本"收敛到远端最新
+ARG GIT_COMMIT=""
+ARG GIT_REPO=""
+RUN printf '{"commit": "%s", "repo": "%s"}\n' "$GIT_COMMIT" "$GIT_REPO" > /app/build-info.json
 
 # Python 依赖（锁文件安装，进 /app/.venv）
 COPY pyproject.toml uv.lock ./

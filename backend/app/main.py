@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel
 
-from . import parsing, store, translator, tts, webdav
+from . import parsing, store, translator, tts, updater, webdav
 from .crawlers import kakuyomu, syosetu
 
 # uvicorn 只配置自己的 logger，应用 logger（app.*）传播到 root 后无 handler 会被丢弃，
@@ -51,6 +51,7 @@ def get_config():
     cfg["api_keys"] = [{**k, "key": _mask(k["key"])} for k in keys]
     cfg["api_key_set"] = bool(keys)
     cfg["api_key"] = _mask(cfg.get("api_key", ""))
+    cfg["github_token"] = _mask(cfg.get("github_token", ""))
     return cfg
 
 
@@ -63,6 +64,9 @@ class ConfigIn(BaseModel):
     concurrency: int | None = None
     max_segment_chars: int | None = None
     webdav_enabled: bool | None = None
+    update_repo: str | None = None
+    update_branch: str | None = None
+    github_token: str | None = None
 
 
 @app.put("/api/config")
@@ -72,6 +76,8 @@ def put_config(body: ConfigIn):
     # 前端回显的是脱敏 key，原样提交时不覆盖
     if updates.get("api_key", "").endswith("..."):
         updates.pop("api_key")
+    if updates.get("github_token", "").endswith("..."):
+        updates.pop("github_token")
     if "api_keys" in updates:
         # 脱敏 key 按位置回代原值；提交了 api_keys 即迁移掉旧的单 key 字段
         old = cfg.get("api_keys") or []
@@ -884,6 +890,31 @@ def export_book(book_id: str, fmt: str = "txt"):
 def _urlquote(s: str) -> str:
     from urllib.parse import quote
     return quote(s)
+
+
+# ---------- 自动更新（GitHub） ----------
+
+@app.get("/api/update/status")
+def update_status():
+    return updater.status()
+
+
+@app.post("/api/update/check")
+async def update_check(force: bool = False):
+    """检查更新（页面进入时调用）；非 force 受冷却时间限制，不重复请求 GitHub。"""
+    try:
+        return await updater.check_now(force=force)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
+
+
+@app.post("/api/update/apply")
+async def update_apply():
+    """用户确认后应用更新：下载源码、构建前端、替换代码并重启服务。"""
+    try:
+        return await updater.apply_update()
+    except RuntimeError as e:
+        raise HTTPException(409, str(e))
 
 
 # ---------- 前端静态文件（生产模式可选） ----------

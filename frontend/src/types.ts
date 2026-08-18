@@ -17,6 +17,26 @@ export interface Config {
   concurrency: number
   max_segment_chars: number
   webdav_enabled: boolean
+  update_repo: string
+  update_branch: string
+  github_token: string
+}
+
+// GET /api/update/status 的返回
+export type UpdateState = 'idle' | 'checking' | 'available' | 'updating' | 'restarting' | 'restart_required' | 'error'
+
+export interface UpdateStatus {
+  status: UpdateState
+  error: string | null
+  repo: string
+  branch: string
+  current_sha: string
+  remote_sha: string | null
+  remote_msg: string | null
+  last_check: number | null
+  update_available: boolean
+  in_docker: boolean
+  cooldown_min: number
 }
 
 export type BookStatus = 'ready' | 'glossary' | 'translating' | 'paused' | 'done' | 'error'

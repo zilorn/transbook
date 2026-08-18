@@ -13,6 +13,7 @@ import type {
   SyosetuRankingsResult,
   SyosetuResult,
   TranslateOptions,
+  UpdateStatus,
 } from './types'
 
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
@@ -182,4 +183,8 @@ export const api = {
   kakuyomuRankings: (genre: string, period: string, variation: string): Promise<KakuyomuRankingsResult> =>
     req(`/api/kakuyomu/rankings?genre=${genre}&period=${period}&variation=${variation}`),
   exportUrl: (id: string, fmt: string): string => `/api/books/${id}/export?fmt=${fmt}`,
+  updateStatus: (): Promise<UpdateStatus> => req('/api/update/status'),
+  updateCheck: (force = false): Promise<UpdateStatus> =>
+    req(`/api/update/check${force ? '?force=true' : ''}`, { method: 'POST' }),
+  updateApply: (): Promise<UpdateStatus> => req('/api/update/apply', { method: 'POST' }),
 }

@@ -1,6 +1,6 @@
-import { createSignal, For, Show } from 'solid-js'
+import { createSignal, For, onMount, Show } from 'solid-js'
 import { api } from './api'
-import type { ApiKeyEntry, Config } from './types'
+import type { ApiKeyEntry, Config, UpdateStatus } from './types'
 
 // 表单编辑过程中数字字段可能是字符串（保存时再 Number 转换）
 type ConfigForm = Omit<Config, 'concurrency' | 'max_segment_chars'> & {
@@ -27,6 +27,42 @@ export default function Settings(props: { config: Config; onClose: (saved: boole
   }
   const addKey = () => set('api_keys', [...form().api_keys, { key: '', model: '', concurrency: 0 }])
   const delKey = (i: number) => set('api_keys', form().api_keys.filter((_, n) => n !== i))
+
+  // ---- 版本更新 ----
+  const [upd, setUpd] = createSignal<UpdateStatus | null>(null)
+  const [updBusy, setUpdBusy] = createSignal(false)
+  const shortSha = (s?: string | null) => (s || '').slice(0, 8) || '未知'
+  const fmtTime = (t?: number | null) => t ? new Date(t * 1000).toLocaleString() : '从未'
+
+  onMount(async () => {
+    try { setUpd(await api.updateStatus()) } catch { /* 忽略 */ }
+  })
+
+  const checkUpdate = async () => {
+    setUpdBusy(true)
+    setError('')
+    try {
+      setUpd(await api.updateCheck(true))
+    } catch (e: any) {
+      setError(String(e.message || e))
+    } finally {
+      setUpdBusy(false)
+    }
+  }
+
+  const applyUpdate = async () => {
+    setUpdBusy(true)
+    setError('')
+    try {
+      const s = await api.updateApply()
+      setUpd(s)
+      if (s.status === 'error') setError(s.error || '更新失败')
+    } catch (e: any) {
+      setError(String(e.message || e))
+    } finally {
+      setUpdBusy(false)
+    }
+  }
 
   const save = async () => {
     setSaving(true)
@@ -115,6 +151,49 @@ export default function Settings(props: { config: Config; onClose: (saved: boole
             从手机等其他设备访问时，把主机名换成本机的局域网 IP。
           </p>
         )}
+        <div class="border-t border-line pt-3 mt-1 mb-3">
+          <div class="mb-2 flex items-center justify-between">
+            <span class="text-[13px] text-muted">版本更新（GitHub）</span>
+            <button class="small" disabled={updBusy()} onClick={checkUpdate}>
+              {updBusy() && upd()?.status === 'checking' ? '检查中…' : '检查更新'}
+            </button>
+          </div>
+          <label class={LABEL}>更新仓库（owner/repo，留空默认官方仓库）
+            <input class={INPUT} value={form().update_repo || ''} placeholder="zilorn/transbook"
+              onInput={(e) => set('update_repo', e.currentTarget.value)} />
+          </label>
+          <div class="flex gap-2">
+            <label class={`${LABEL} flex-1`}>分支
+              <input class={INPUT} value={form().update_branch || ''} placeholder="main"
+                onInput={(e) => set('update_branch', e.currentTarget.value)} />
+            </label>
+            <label class={`${LABEL} flex-[2]`}>GitHub Token（私有仓库用，可留空）
+              <input class={INPUT} type="password" value={form().github_token || ''}
+                onInput={(e) => set('github_token', e.currentTarget.value)} />
+            </label>
+          </div>
+          <Show when={upd()}>
+            <p class="text-[12px] text-muted mb-2 break-all">
+              当前版本 <code>{shortSha(upd()!.current_sha)}</code>
+              <Show when={upd()!.remote_sha}>
+                {' '}→ 最新 <code>{shortSha(upd()!.remote_sha)}</code>（{upd()!.remote_msg}）
+              </Show>
+              <br />上次检查：{fmtTime(upd()!.last_check)}（冷却 {upd()!.cooldown_min} 分钟内不重复请求）
+              <Show when={upd()!.status === 'updating'}>
+                <br />正在更新：下载源码并构建前端，完成后服务自动重启…
+              </Show>
+              <Show when={upd()!.status === 'restarting'}><br />正在重启服务…</Show>
+              <Show when={upd()!.status === 'restart_required'}>
+                <br />更新已应用，非 Docker 环境需手动重启服务生效。
+              </Show>
+            </p>
+            <Show when={upd()!.update_available && !['updating', 'restarting'].includes(upd()!.status)}>
+              <button class="primary small mb-2" disabled={updBusy()} onClick={applyUpdate}>
+                {updBusy() ? '更新中…' : '立即更新'}
+              </button>
+            </Show>
+          </Show>
+        </div>
         {error() && <p class="text-danger text-[13px]">{error()}</p>}
         <div class="flex justify-end gap-2.5 mt-2">
           <button onClick={() => props.onClose(false)}>取消</button>
