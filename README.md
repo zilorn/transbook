@@ -24,15 +24,37 @@
 ```bash
 uv sync          # 安装 Python 依赖（根目录执行）
 bun install      # 安装 JS 依赖（根目录执行）
-./start.sh       # 一键启动：后端 8300，前端 5173，Ctrl+C 全部停止
+./start.sh       # 一键启动：构建前端后由后端托管，仅 8300 一个端口，Ctrl+C 停止
 ```
 
-打开 http://localhost:5173 ，在「设置」页填入 DeepSeek API Key 即可开始使用。
+打开 http://localhost:8300 ，在「设置」页填入 DeepSeek API Key 即可开始使用。
 
 端口被占用时可以换端口启动：
 
 ```bash
-BACKEND_PORT=8301 FRONTEND_PORT=5174 ./start.sh
+BACKEND_PORT=8301 ./start.sh
+```
+
+## Docker 部署
+
+前置依赖：[Docker](https://docs.docker.com/get-docker/)（含 Compose 插件）。无需安装 uv / Bun，前端构建在镜像内完成。
+
+```bash
+docker compose up -d --build   # 构建镜像并后台启动
+```
+
+打开 http://localhost:8300 ，在「设置」页填入 DeepSeek API Key 即可开始使用。
+
+- **数据持久化**：全部运行数据（书籍、译文、配置、翻译队列、TTS 缓存）通过绑定挂载落在宿主机 `./backend/data/`，删容器/重建镜像数据不丢，已有数据直接可用。
+- **局域网访问**：容器监听 `0.0.0.0`，局域网设备直接访问 `http://<宿主机IP>:8300`；WebDAV 书库在「设置」页开启后位于 `http://<宿主机IP>:8300/webdav/`（无认证，勿暴露公网）。
+- **换端口**：编辑 `docker-compose.yml` 的 `ports`，如 `"8301:8300"`。
+
+常用命令：
+
+```bash
+docker compose up -d --build   # 代码更新后重新构建并启动
+docker compose logs -f         # 查看日志
+docker compose down            # 停止并删除容器（数据保留在 ./backend/data）
 ```
 
 ## 单独启动

@@ -1,0 +1,10 @@
+services:
+  transbook:
+    build: .
+    container_name: transbook
+    ports:
+      - "8300:8300"
+    volumes:
+      # 全部运行数据（书籍/译文/配置/队列/TTS 缓存）持久化到 ./backend/data
+      - ./backend/data:/app/backend/data
+    restart: unless-stopped

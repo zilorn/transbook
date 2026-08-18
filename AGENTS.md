@@ -48,6 +48,7 @@ bun install                         # 安装 JS 依赖（根目录执行）
 cd frontend && bun run build        # 构建前端到 frontend/dist（后端会自动挂载为静态站）
 cd frontend && bun run typecheck    # TypeScript 类型检查（tsc --noEmit）
 uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
+docker compose up -d --build              # Docker 一键部署：镜像内构建前端，数据卷挂 ./backend/data
 ```
 
 注意：后端固定用 **8300**。生产模式由 FastAPI 托管
