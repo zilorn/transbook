@@ -781,12 +781,14 @@ export default function ReaderPage() {
     actx = undefined
   })
 
-  // 打开目录时滚动到当前章
+  // 打开目录时滚动到当前章；同时锁定正文滚动，防止抽屉滚动穿透到正文
   let tocRef: HTMLDivElement | undefined
   createEffect(() => {
     if (tocOpen()) {
+      document.body.style.overflow = 'hidden'
       requestAnimationFrame(() =>
         tocRef?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'center' }))
+      onCleanup(() => { document.body.style.overflow = '' })
     }
   })
 
@@ -1054,7 +1056,7 @@ export default function ReaderPage() {
         <div class="fixed inset-0 z-20 bg-black/40" onClick={() => setTocOpen(false)}>
           <div ref={tocRef}
             class="reader-bar absolute right-0 top-0 h-full w-full md:w-[360px] overflow-y-auto border-l"
-            style={{ background: theme().bg, 'border-color': theme().line }}
+            style={{ background: theme().bg, 'border-color': theme().line, 'overscroll-behavior': 'contain' }}
             onClick={(e) => e.stopPropagation()}>
             <div class="sticky top-0 z-10 flex items-center gap-1 px-2 h-[48px] border-b"
               style={{ background: theme().bg, 'border-color': theme().line }}>
