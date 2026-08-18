@@ -117,22 +117,6 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   不走可见句定位（此刻滚动位置还是上一章的），仍从首句开始。播放/暂停按钮只随播放意图
   （`wantPlay`/`setWant`）变化；
   暂停/关闭/切章时递增 `playGen`，在途的下一句合成等待被作废（句间隙暂停也能立刻停住）。
-  **播放用 Web Audio 而非 HTMLAudio**：HTMLAudio 在移动端每次换 src/play 都要重建媒体管线
-  （数百 ms，双元素预载也不提前解码），句间必停顿；改为 `AudioContext` +
-  逐句 `decodeAudioData`（解码结果不缓存，整章 PCM 上百 MB 内存吃不消；blob 缓存照走
-  `audioCache`），`armNext` 预解码下一句并在当前句结束时刻 `start(at)` 精确调度
-  （采样级无缝；解码慢于剩余时长退化为立即开播），
-  `onSrcEnded` 里把预调度源记账接管为当前句。倍速不走前端 playbackRate
-  （Web Audio 重采样会变调）：请求带 `rate`，后端 edge-tts 生成时生效（保调变速）；
-  换倍速 = 清本章音频缓存（`playKey` 含倍速），保持位置重读当前句，预取按新倍速重启。暂停=`ctx.suspend()` 冻结时钟
-  （在播句与预调度句一起停住），续播=`ctx.resume()`；跳句/切章/关闭用 `killSrc`
-  停源并摘除 onended（只有自然播完才走接续）。切章/换音色续播的 effect 里 `ttsIdx`
-  必须 `untrack` 读取——否则 `playSentence` 的 `setTtsIdx` 会重触 effect，同一句被重复播放。
-  播放控件是右下悬浮球组：主球（SVG 播放/暂停图标）+ 同组两个小圆钮（SVG 关闭听书、SVG 收起/展开
-  控制面板），控制面板（进度/上一句/下一句/倍速/音色，`ttsCtlOpen` 信号控制）可收缩只剩球组，
-  所有图标均为 SVG（上一句/下一句不用 emoji），
-  上一句/下一句（`skipSentence`）播放中跳句重读（递增 `playGen` 作废在途合成），暂停中只移动高亮位置；
-  浮起避开手机底部导航栏遮挡，不再是贴底通栏。
 - **书签/文本选取（阅读器）**：监听 `selectionchange`（去抖 120ms，移动端拖动句柄停手后才出条）
   在选区上方弹自定义工具条（复制/书签/朗读），工具条 `pointerdown` preventDefault 防点按钮前选区被清；
   选取覆盖到任一书签句（`selSis` ∩ `bmSis`，哪怕只命中一半）时书签按钮变为「取消书签」，
