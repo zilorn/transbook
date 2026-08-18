@@ -123,9 +123,13 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   点击删除本章所有与选取相交的书签（`unbookmarkSel`）；
   正文容器 `[-webkit-touch-callout:none]` + `contextmenu` preventDefault 屏蔽原生 callout/右键菜单
   （Android Chrome 选中后的系统浮动菜单无法用 Web API 完全屏蔽）。书签存 `book.json` 的
-  `bookmarks`（`{id, cid, sis[], text, created_at}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
-  重译后下标可能漂移，`text` 是添加时的文本快照）；书签句加 `.bm-mark` 橙色下划线（txt 走 Solid
-  classList，epub 走 effect 切类，与 `.tts-active` 同套路）。epub 正文容器的 ref `segEl`
+  `bookmarks`（`{id, cid, sis[], text, created_at, ranges?}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
+  重译后下标可能漂移，`text` 是添加时的文本快照）；`ranges`（`{si, start, end}[]`）记录选取在每句内
+  覆盖的字符区间（相对该句文本的偏移），下划线精确到选取的字：新书签只给区间内的字加 `.bm-mark`
+  橙色下划线（txt 用 `markParts` 把句文本切成划线/普通片段渲染，epub 用 `wrapTextRange`
+  把句 span 内对应文本包 `.bm-mark.bm-part`，重刷前先拆旧包裹还原；跨界包裹失败兜底整句切类）；
+  无 `ranges` 的旧书签仍整句划线（txt 走 Solid classList，epub 走 effect 切类，与 `.tts-active` 同套路）。
+  epub 正文容器的 ref `segEl`
   必须是 signal（`createSignal`）而非普通变量：div 创建晚于首批 effect 执行，普通变量
   不触发重跑，依赖它的 effect 在 ref 赋值前 bailout 后不再重跑，会导致直开章节时
   `.bm-mark`/`.tts-active` 不显示。朗读起点取选区内第一个含文字

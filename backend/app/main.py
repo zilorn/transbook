@@ -298,12 +298,19 @@ def put_read_progress(book_id: str, body: ProgressIn):
     return {"ok": True}
 
 
-# ---------- 书签（阅读器选中文本添加，句子级定位：cid + 句号列表）----------
+# ---------- 书签（阅读器选中文本添加：cid + 句号列表 + 句内字符区间，划线精确到选取的字）----------
+
+class BookmarkRangeIn(BaseModel):
+    si: int
+    start: int
+    end: int
+
 
 class BookmarkIn(BaseModel):
     cid: str
     sis: list[int]
     text: str
+    ranges: list[BookmarkRangeIn] | None = None  # 每句内选取的字符区间；缺省（旧数据）= 整句划线
 
 
 @app.post("/api/books/{book_id}/bookmarks")
@@ -319,6 +326,13 @@ def add_bookmark(book_id: str, body: BookmarkIn):
         raise HTTPException(400, "书签内容为空")
     bm = {"id": store.new_book_id()[:8], "cid": body.cid, "sis": sis,
           "text": text, "created_at": store.now()}
+    if body.ranges:
+        si_set = set(sis)
+        ranges = [{"si": r.si, "start": r.start, "end": min(r.end, 20000)}
+                  for r in body.ranges
+                  if r.si in si_set and 0 <= r.start < r.end]
+        if ranges:
+            bm["ranges"] = ranges
     book.setdefault("bookmarks", []).append(bm)
     store.save_book(book)
     return bm

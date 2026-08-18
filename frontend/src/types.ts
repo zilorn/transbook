@@ -78,6 +78,8 @@ export interface Bookmark {
   sis: number[]
   text: string
   created_at: number
+  /** 句内选取的字符区间（相对该句文本的偏移）；缺省（旧数据）表示整句划线 */
+  ranges?: { si: number; start: number; end: number }[]
 }
 
 // GET /api/books/{id} / POST /api/books 的整书结构

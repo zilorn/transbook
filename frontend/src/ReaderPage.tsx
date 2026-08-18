@@ -196,14 +196,68 @@ export default function ReaderPage() {
   const chapter = () => (idx() >= 0 ? chapters()[idx()] : null)
   const theme = () => THEMES[settings().theme]
 
-  // ---- 书签（选中文本添加；句子级定位，书签句显示橙色下划线）----
+  // ---- 书签（选中文本添加；句号定位 + 句内字符区间，下划线精确到选取的字）----
   const bookmarks = (): Bookmark[] => book()?.bookmarks ?? []
-  // 当前章节被书签覆盖的句号集合
+  // 当前章节被书签覆盖的句号集合（用于选取命中判断 / 旧数据整句划线）
   const bmSis = (): Set<number> =>
     new Set(bookmarks().filter(b => b.cid === params.cid).flatMap(b => b.sis))
+  // 旧数据（无 ranges）：整句划线的句号集合
+  const bmWholeSis = (): Set<number> =>
+    new Set(bookmarks().filter(b => b.cid === params.cid && !b.ranges?.length).flatMap(b => b.sis))
+  // 新数据：句号 → 句内字符区间列表（只划选取的那部分字）
+  const bmPartRanges = (): Map<number, { start: number; end: number }[]> => {
+    const m = new Map<number, { start: number; end: number }[]>()
+    for (const b of bookmarks()) {
+      if (b.cid !== params.cid || !b.ranges?.length) continue
+      for (const r of b.ranges) {
+        const arr = m.get(r.si) ?? []
+        arr.push({ start: r.start, end: r.end })
+        m.set(r.si, arr)
+      }
+    }
+    return m
+  }
   const delBookmark = (bm: Bookmark) => {
     setBook(prev => prev && { ...prev, bookmarks: (prev.bookmarks ?? []).filter(x => x.id !== bm.id) })
     void api.removeBookmark(bookId, bm.id).catch(() => {})
+  }
+
+  // txt 渲染用：按句内字符区间把句文本切成 划线/普通 片段（区间排序合并、裁剪到文本长度）
+  const markParts = (t: string, rs: { start: number; end: number }[]): { t: string; mark: boolean }[] => {
+    const sorted = rs
+      .map(r => ({ start: Math.max(0, Math.min(r.start, t.length)), end: Math.max(0, Math.min(r.end, t.length)) }))
+      .filter(r => r.end > r.start)
+      .sort((a, b) => a.start - b.start)
+    const parts: { t: string; mark: boolean }[] = []
+    let pos = 0
+    for (const r of sorted) {
+      const s = Math.max(r.start, pos)
+      if (s > pos) parts.push({ t: t.slice(pos, s), mark: false })
+      if (r.end > s) parts.push({ t: t.slice(s, r.end), mark: true })
+      pos = Math.max(pos, r.end)
+    }
+    if (pos < t.length) parts.push({ t: t.slice(pos), mark: false })
+    return parts
+  }
+
+  // epub 渲染用：把句 span 内 [start,end) 的文本包一层 .bm-mark（跨界包裹失败则整句划线兜底）
+  const wrapTextRange = (span: HTMLElement, start: number, end: number) => {
+    const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT)
+    let pos = 0
+    let sNode: Node | null = null, sOff = 0, eNode: Node | null = null, eOff = 0
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const len = n.textContent?.length ?? 0
+      if (!sNode && start < pos + len) { sNode = n; sOff = start - pos }
+      if (sNode && end <= pos + len) { eNode = n; eOff = end - pos; break }
+      pos += len
+    }
+    if (!sNode || !eNode) { span.classList.add('bm-mark'); return }
+    const r = document.createRange()
+    r.setStart(sNode, sOff)
+    r.setEnd(eNode, eOff)
+    const mark = document.createElement('span')
+    mark.className = 'bm-mark bm-part'
+    try { r.surroundContents(mark) } catch { span.classList.add('bm-mark') }
   }
 
   // ---- 文本选取（自定义工具条：复制/书签/朗读；屏蔽原生 callout 与右键菜单）----
@@ -233,10 +287,26 @@ export default function ReaderPage() {
   const clearSel = () => { window.getSelection()?.removeAllRanges(); setSelMenu(null); setSelSis([]) }
 
   // 选取覆盖到的可朗读句号（span[data-si]，txt/epub 渲染结构一致）
-  const coveredSis = (range: Range): number[] => {
-    const out: number[] = []
+  const coveredSis = (range: Range): number[] => coveredRanges(range).map(r => r.si)
+
+  // 选取在每句内覆盖的字符区间（相对该句 span 文本的偏移），划线精确到选取的字
+  const coveredRanges = (range: Range): { si: number; start: number; end: number }[] => {
+    const out: { si: number; start: number; end: number }[] = []
     for (const el of contentRef?.querySelectorAll<HTMLElement>('span[data-si]') ?? []) {
-      try { if (range.intersectsNode(el)) out.push(Number(el.dataset.si)) } catch { /* 游离节点 */ }
+      try {
+        if (!range.intersectsNode(el)) continue
+        const sr = document.createRange()
+        sr.selectNodeContents(el)
+        const r = range.cloneRange()
+        if (r.compareBoundaryPoints(Range.START_TO_START, sr) < 0) r.setStart(sr.startContainer, sr.startOffset)
+        if (r.compareBoundaryPoints(Range.END_TO_END, sr) > 0) r.setEnd(sr.endContainer, sr.endOffset)
+        const pre = document.createRange()
+        pre.setStart(sr.startContainer, sr.startOffset)
+        pre.setEnd(r.startContainer, r.startOffset)
+        const start = pre.toString().length
+        const end = start + r.toString().length
+        if (end > start) out.push({ si: Number(el.dataset.si), start, end })
+      } catch { /* 游离节点 */ }
     }
     return out
   }
@@ -269,12 +339,12 @@ export default function ReaderPage() {
     const sel = window.getSelection()
     const c = chapter()
     if (!sel || sel.isCollapsed || !c) return
-    const sis = coveredSis(sel.getRangeAt(0))
+    const ranges = coveredRanges(sel.getRangeAt(0))
     const text = sel.toString().trim()
     clearSel()
-    if (!sis.length || !text) return
+    if (!ranges.length || !text) return
     try {
-      const bm = await api.addBookmark(bookId, { cid: c.id, sis, text })
+      const bm = await api.addBookmark(bookId, { cid: c.id, sis: ranges.map(r => r.si), text, ranges })
       setBook(prev => prev && { ...prev, bookmarks: [...(prev.bookmarks ?? []), bm] })
     } catch { /* 失败静默：下次选取可再试 */ }
   }
@@ -673,15 +743,29 @@ export default function ReaderPage() {
     if (i >= 0) el.querySelector(`[data-si="${i}"]`)?.classList.add('tts-active')
   })
 
-  // epub 书签橙色下划线：内容重渲染（innerHTML）或书签增删后重刷（txt 由 classList 绑定）
+  // epub 书签橙色下划线：内容重渲染（innerHTML）或书签增删后重刷（txt 由 Solid 渲染切片）。
+  // 无 ranges 的旧书签整句切类；有 ranges 的按句内字符区间包 .bm-mark.bm-part 局部划线
   createEffect(() => {
     const c = chapter()
-    const marks = bmSis()
+    const whole = bmWholeSis()
+    const parts = bmPartRanges()
     const el = segEl()
     if (!epubSeg() || !el || c?.format !== 'epub') return
     el.querySelectorAll('.bm-mark').forEach(e => e.classList.remove('bm-mark'))
+    // 拆掉旧的局部划线包裹，还原文本节点
+    el.querySelectorAll('span.bm-part').forEach(e => {
+      const p = e.parentNode!
+      while (e.firstChild) p.insertBefore(e.firstChild, e)
+      p.removeChild(e)
+    })
+    el.normalize()
     for (const e of el.querySelectorAll<HTMLElement>('span[data-si]'))
-      if (marks.has(Number(e.dataset.si))) e.classList.add('bm-mark')
+      if (whole.has(Number(e.dataset.si))) e.classList.add('bm-mark')
+    for (const [si, rs] of parts) {
+      const span = el.querySelector<HTMLElement>(`span[data-si="${si}"]`)
+      if (!span) continue
+      for (const r of rs) wrapTextRange(span, r.start, r.end)
+    }
   })
 
   // 书签跳转：本章内容加载完成后滚到书签句。pendingJump 为页内跳转；
@@ -878,8 +962,11 @@ export default function ReaderPage() {
                       style={{ 'font-size': `${settings().fontSize}px`, 'line-height': 1.9 }}>
                       <For each={segments()}>{(seg) => seg.si < 0 ? seg.t : (
                         <span data-si={seg.si} class="px-[1px]"
-                          classList={{ 'tts-active': seg.si === ttsIdx(), 'bm-mark': bmSis().has(seg.si) }}>
-                          {seg.t}
+                          classList={{ 'tts-active': seg.si === ttsIdx(), 'bm-mark': bmWholeSis().has(seg.si) }}>
+                          {bmPartRanges().get(seg.si)
+                            ? <For each={markParts(seg.t, bmPartRanges().get(seg.si)!)}>{(p) =>
+                                p.mark ? <span class="bm-mark">{p.t}</span> : p.t}</For>
+                            : seg.t}
                         </span>
                       )}</For>
                     </pre>
