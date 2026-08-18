@@ -263,18 +263,18 @@ export default function ReaderPage() {
   // ---- 文本选取（自定义工具条：复制/书签/朗读；屏蔽原生 callout 与右键菜单）----
   let contentRef: HTMLDivElement | undefined
   const [selMenu, setSelMenu] = createSignal<{ x: number; y: number; above: boolean } | null>(null)
-  // 当前选取覆盖到的可朗读句号（用于判断选取是否命中书签句）
-  const [selSis, setSelSis] = createSignal<number[]>([])
+  // 当前选取在每句内覆盖的字符区间（用于逐字判断选取是否命中书签划线）
+  const [selRanges, setSelRanges] = createSignal<{ si: number; start: number; end: number }[]>([])
   let selTimer: ReturnType<typeof setTimeout> | undefined
   const onSelChange = () => {
     clearTimeout(selTimer)
     selTimer = setTimeout(() => {
       const sel = window.getSelection()
       const root = contentRef
-      if (!sel || sel.isCollapsed || !root || !sel.toString().trim()) { setSelMenu(null); setSelSis([]); return }
+      if (!sel || sel.isCollapsed || !root || !sel.toString().trim()) { setSelMenu(null); setSelRanges([]); return }
       const range = sel.getRangeAt(0)
-      if (!root.contains(range.commonAncestorContainer)) { setSelMenu(null); setSelSis([]); return }
-      setSelSis(coveredSis(range))
+      if (!root.contains(range.commonAncestorContainer)) { setSelMenu(null); setSelRanges([]); return }
+      setSelRanges(coveredRanges(range))
       const r = range.getBoundingClientRect()
       const above = r.top > 56
       setSelMenu({
@@ -284,10 +284,7 @@ export default function ReaderPage() {
       })
     }, 120) // 去抖：移动端拖动手柄期间持续触发，停手后才出工具条
   }
-  const clearSel = () => { window.getSelection()?.removeAllRanges(); setSelMenu(null); setSelSis([]) }
-
-  // 选取覆盖到的可朗读句号（span[data-si]，txt/epub 渲染结构一致）
-  const coveredSis = (range: Range): number[] => coveredRanges(range).map(r => r.si)
+  const clearSel = () => { window.getSelection()?.removeAllRanges(); setSelMenu(null); setSelRanges([]) }
 
   // 选取在每句内覆盖的字符区间（相对该句 span 文本的偏移），划线精确到选取的字
   const coveredRanges = (range: Range): { si: number; start: number; end: number }[] => {
@@ -349,14 +346,20 @@ export default function ReaderPage() {
     } catch { /* 失败静默：下次选取可再试 */ }
   }
 
-  // 选取命中任一书签句（哪怕只覆盖一半）时，工具条改显示"取消书签"
+  // 选取与任一书签的划线区间逐字相交（旧书签无 ranges 按整句算）时，工具条改显示"取消书签"
   const selHasBm = (): boolean => {
-    const bm = bmSis()
-    return selSis().some(si => bm.has(si))
+    const whole = bmWholeSis()
+    const parts = bmPartRanges()
+    return selRanges().some(r =>
+      whole.has(r.si) || !!parts.get(r.si)?.some(br => br.start < r.end && r.start < br.end))
   }
   const unbookmarkSel = () => {
-    const covered = new Set(selSis())
-    const toRemove = bookmarks().filter(b => b.cid === params.cid && b.sis.some(si => covered.has(si)))
+    const sel = selRanges()
+    const toRemove = bookmarks().filter(b => {
+      if (b.cid !== params.cid) return false
+      if (!b.ranges?.length) return b.sis.some(si => sel.some(r => r.si === si))
+      return b.ranges.some(br => sel.some(r => r.si === br.si && br.start < r.end && r.start < br.end))
+    })
     clearSel()
     for (const bm of toRemove) delBookmark(bm)
   }

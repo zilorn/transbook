@@ -119,8 +119,8 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   暂停/关闭/切章时递增 `playGen`，在途的下一句合成等待被作废（句间隙暂停也能立刻停住）。
 - **书签/文本选取（阅读器）**：监听 `selectionchange`（去抖 120ms，移动端拖动句柄停手后才出条）
   在选区上方弹自定义工具条（复制/书签/朗读），工具条 `pointerdown` preventDefault 防点按钮前选区被清；
-  选取覆盖到任一书签句（`selSis` ∩ `bmSis`，哪怕只命中一半）时书签按钮变为「取消书签」，
-  点击删除本章所有与选取相交的书签（`unbookmarkSel`）；
+  选取与任一书签的划线区间逐字相交（`selRanges` vs 书签 `ranges` 区间重叠判断；无 `ranges` 的旧书签
+  退化为整句相交）时书签按钮变为「取消书签」，点击删除本章所有与选取逐字相交的书签（`unbookmarkSel`）；
   正文容器 `[-webkit-touch-callout:none]` + `contextmenu` preventDefault 屏蔽原生 callout/右键菜单
   （Android Chrome 选中后的系统浮动菜单无法用 Web API 完全屏蔽）。书签存 `book.json` 的
   `bookmarks`（`{id, cid, sis[], text, created_at, ranges?}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
