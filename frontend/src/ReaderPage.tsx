@@ -16,7 +16,7 @@ const THEMES: Record<ThemeKey, Theme> = {
 interface ReaderSettings { fontSize: number; theme: ThemeKey; voice: string; rate: number }
 interface Progress { cid: string; y: number }
 
-const RATES = [0.75, 1, 1.25, 1.5, 2]
+const RATES = [0.75, 1, 1.25, 1.5, 2, 2.5, 3]
 
 const SETTINGS_KEY = 'reader-settings'
 

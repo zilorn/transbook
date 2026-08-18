@@ -400,8 +400,8 @@ class TtsWarmReq(BaseModel):
 
 
 def _check_rate(rate: float) -> float:
-    if not 0.5 <= rate <= 2.0:
-        raise HTTPException(400, "不支持的倍速（0.5~2.0）")
+    if not 0.5 <= rate <= 3.0:
+        raise HTTPException(400, "不支持的倍速（0.5~3.0）")
     return rate
 
 
