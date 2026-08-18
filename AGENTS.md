@@ -139,7 +139,10 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   （Android Chrome 选中后的系统浮动菜单无法用 Web API 完全屏蔽）。书签存 `book.json` 的
   `bookmarks`（`{id, cid, sis[], text, created_at}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
   重译后下标可能漂移，`text` 是添加时的文本快照）；书签句加 `.bm-mark` 橙色下划线（txt 走 Solid
-  classList，epub 走 effect 切类，与 `.tts-active` 同套路）。朗读起点取选区内第一个含文字
+  classList，epub 走 effect 切类，与 `.tts-active` 同套路）。epub 正文容器的 ref `segEl`
+  必须是 signal（`createSignal`）而非普通变量：div 创建晚于首批 effect 执行，普通变量
+  不触发重跑，依赖它的 effect 在 ref 赋值前 bailout 后不再重跑，会导致直开章节时
+  `.bm-mark`/`.tts-active` 不显示。朗读起点取选区内第一个含文字
   （`\p{L}\p{N}`）字符所在的句（首字符是标点则顺延）。书签查看/删除：目录抽屉「书签」页签 +
   书籍详情页「书签」标签页；跳转页内直接 `scrollIntoView`，跨页经 sessionStorage
   `reader-jump:<bookId>`（60s 内有效，消费即删），跳转到目标章时不恢复旧滚动位置。

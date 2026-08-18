@@ -132,7 +132,10 @@ export default function ReaderPage() {
   // epub：用 DOMParser 处理 HTML 字符串（不依赖渲染时机，避免 effect/ref 竞态导致句清单为空），
   // 把文本节点拆成句级 span[data-si] 并同步收集句文本作为朗读清单——渲染的句与朗读的句是同一份数据。
   // 跳过 style/script/title 内的文本、纯空白节点与纯标点段（不朗读，按原样渲染不高亮）。
-  let segEl: HTMLDivElement | undefined
+  // segEl 用 signal 而非普通变量：epub 正文 div 的创建晚于首批 effect 执行，
+  // 普通变量不触发重跑，依赖 segEl 的 effect（tts 高亮/书签下划线）会在 ref 赋值前
+  //  bailout 且之后再不重跑，导致首次进章节标记不显示
+  const [segEl, setSegEl] = createSignal<HTMLDivElement | undefined>(undefined)
   const splitEpubHtml = (html: string): { html: string; texts: string[] } => {
     const doc = new DOMParser().parseFromString(html, 'text/html')
     const walker = doc.createTreeWalker(doc.body || doc.documentElement, NodeFilter.SHOW_TEXT, {
@@ -649,19 +652,21 @@ export default function ReaderPage() {
   createEffect(() => {
     const i = ttsIdx()
     const c = chapter()
-    if (!segEl || c?.format !== 'epub') return
-    segEl.querySelector('.tts-active')?.classList.remove('tts-active')
-    if (i >= 0) segEl.querySelector(`[data-si="${i}"]`)?.classList.add('tts-active')
+    const el = segEl()
+    if (!el || c?.format !== 'epub') return
+    el.querySelector('.tts-active')?.classList.remove('tts-active')
+    if (i >= 0) el.querySelector(`[data-si="${i}"]`)?.classList.add('tts-active')
   })
 
   // epub 书签橙色下划线：内容重渲染（innerHTML）或书签增删后重刷（txt 由 classList 绑定）
   createEffect(() => {
     const c = chapter()
     const marks = bmSis()
-    if (!epubSeg() || !segEl || c?.format !== 'epub') return
-    segEl.querySelectorAll('.bm-mark').forEach(el => el.classList.remove('bm-mark'))
-    for (const el of segEl.querySelectorAll<HTMLElement>('span[data-si]'))
-      if (marks.has(Number(el.dataset.si))) el.classList.add('bm-mark')
+    const el = segEl()
+    if (!epubSeg() || !el || c?.format !== 'epub') return
+    el.querySelectorAll('.bm-mark').forEach(e => e.classList.remove('bm-mark'))
+    for (const e of el.querySelectorAll<HTMLElement>('span[data-si]'))
+      if (marks.has(Number(e.dataset.si))) e.classList.add('bm-mark')
   })
 
   // 书签跳转：本章内容加载完成后滚到书签句。pendingJump 为页内跳转；
@@ -863,7 +868,7 @@ export default function ReaderPage() {
                     </pre>
                   }>
                     <div class="preview-html break-words"
-                      ref={(el) => { segEl = el }}
+                      ref={setSegEl}
                       style={{ 'font-size': `${settings().fontSize}px`, 'line-height': 1.9 }}
                       onClick={(e) => {
                         const t = e.target as HTMLElement
