@@ -209,15 +209,18 @@ export default function ReaderPage() {
   // ---- 文本选取（自定义工具条：复制/书签/朗读；屏蔽原生 callout 与右键菜单）----
   let contentRef: HTMLDivElement | undefined
   const [selMenu, setSelMenu] = createSignal<{ x: number; y: number; above: boolean } | null>(null)
+  // 当前选取覆盖到的可朗读句号（用于判断选取是否命中书签句）
+  const [selSis, setSelSis] = createSignal<number[]>([])
   let selTimer: ReturnType<typeof setTimeout> | undefined
   const onSelChange = () => {
     clearTimeout(selTimer)
     selTimer = setTimeout(() => {
       const sel = window.getSelection()
       const root = contentRef
-      if (!sel || sel.isCollapsed || !root || !sel.toString().trim()) { setSelMenu(null); return }
+      if (!sel || sel.isCollapsed || !root || !sel.toString().trim()) { setSelMenu(null); setSelSis([]); return }
       const range = sel.getRangeAt(0)
-      if (!root.contains(range.commonAncestorContainer)) { setSelMenu(null); return }
+      if (!root.contains(range.commonAncestorContainer)) { setSelMenu(null); setSelSis([]); return }
+      setSelSis(coveredSis(range))
       const r = range.getBoundingClientRect()
       const above = r.top > 56
       setSelMenu({
@@ -227,7 +230,7 @@ export default function ReaderPage() {
       })
     }, 120) // 去抖：移动端拖动手柄期间持续触发，停手后才出工具条
   }
-  const clearSel = () => { window.getSelection()?.removeAllRanges(); setSelMenu(null) }
+  const clearSel = () => { window.getSelection()?.removeAllRanges(); setSelMenu(null); setSelSis([]) }
 
   // 选取覆盖到的可朗读句号（span[data-si]，txt/epub 渲染结构一致）
   const coveredSis = (range: Range): number[] => {
@@ -274,6 +277,18 @@ export default function ReaderPage() {
       const bm = await api.addBookmark(bookId, { cid: c.id, sis, text })
       setBook(prev => prev && { ...prev, bookmarks: [...(prev.bookmarks ?? []), bm] })
     } catch { /* 失败静默：下次选取可再试 */ }
+  }
+
+  // 选取命中任一书签句（哪怕只覆盖一半）时，工具条改显示"取消书签"
+  const selHasBm = (): boolean => {
+    const bm = bmSis()
+    return selSis().some(si => bm.has(si))
+  }
+  const unbookmarkSel = () => {
+    const covered = new Set(selSis())
+    const toRemove = bookmarks().filter(b => b.cid === params.cid && b.sis.some(si => covered.has(si)))
+    clearSel()
+    for (const bm of toRemove) delBookmark(bm)
   }
 
   const speakSel = () => {
@@ -1033,8 +1048,8 @@ export default function ReaderPage() {
         </div>
       </Show>
 
-      {/* 文本选取工具条：复制 / 书签 / 朗读。pointerdown 阻止默认行为，
-          避免点按钮前选区被浏览器清掉 */}
+      {/* 文本选取工具条：复制 / 书签（选取命中书签句时为取消书签）/ 朗读。
+          pointerdown 阻止默认行为，避免点按钮前选区被浏览器清掉 */}
       <Show when={selMenu()}>
         {(m) => (
           <div class="reader-bar fixed z-30 flex gap-1 rounded-[8px] border shadow-lg p-1 select-none"
@@ -1045,7 +1060,10 @@ export default function ReaderPage() {
             }}
             onPointerDown={(e) => e.preventDefault()}>
             <button class="small border-0" onClick={copySel}>复制</button>
-            <button class="small border-0" onClick={() => void bookmarkSel()}>书签</button>
+            <Show when={selHasBm()}
+              fallback={<button class="small border-0" onClick={() => void bookmarkSel()}>书签</button>}>
+              <button class="small border-0" onClick={unbookmarkSel}>取消书签</button>
+            </Show>
             <button class="small border-0" onClick={speakSel}>朗读</button>
           </div>
         )}

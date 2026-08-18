@@ -135,6 +135,8 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   浮起避开手机底部导航栏遮挡，不再是贴底通栏。
 - **书签/文本选取（阅读器）**：监听 `selectionchange`（去抖 120ms，移动端拖动句柄停手后才出条）
   在选区上方弹自定义工具条（复制/书签/朗读），工具条 `pointerdown` preventDefault 防点按钮前选区被清；
+  选取覆盖到任一书签句（`selSis` ∩ `bmSis`，哪怕只命中一半）时书签按钮变为「取消书签」，
+  点击删除本章所有与选取相交的书签（`unbookmarkSel`）；
   正文容器 `[-webkit-touch-callout:none]` + `contextmenu` preventDefault 屏蔽原生 callout/右键菜单
   （Android Chrome 选中后的系统浮动菜单无法用 Web API 完全屏蔽）。书签存 `book.json` 的
   `bookmarks`（`{id, cid, sis[], text, created_at}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
