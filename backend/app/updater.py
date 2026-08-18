@@ -200,20 +200,31 @@ def _apply_update(repo: str, sha: str, token: str) -> None:
                 tf.extractall(work)
         src = next(work.iterdir())  # 解压出的顶层目录 <repo>-<sha>
 
-        # 依赖清单先就位（uv.lock 变化时需要重装；无变化时 uv sync 秒过）
-        for name in ("pyproject.toml", "uv.lock"):
-            p = src / name
-            if p.exists():
-                shutil.copy2(p, APP_ROOT / name)
-        if uv:
-            _run([uv, "sync", "--frozen", "--no-dev"], APP_ROOT)
-
-        # 前端在暂存目录内构建，不动现有产物
+        # 先在暂存目录构建前端（最容易失败的步骤），失败时运行环境完全未被改动
         _run([bun, "install", "--frozen-lockfile"], src, timeout=1200)
         _run([bun, "run", "build"], src / "frontend", timeout=1200)
         new_dist = src / "frontend" / "dist"
         if not new_dist.is_dir():
             raise RuntimeError("前端构建未产出 dist 目录")
+
+        # 构建成功后同步 Python 依赖（uv.lock 变化时重装，无变化秒过）；
+        # 失败则回滚依赖清单，避免"新依赖 + 旧代码"的不一致状态
+        manifests = {}
+        for name in ("pyproject.toml", "uv.lock"):
+            p = APP_ROOT / name
+            if p.exists():
+                manifests[name] = p.read_bytes()
+        try:
+            for name in ("pyproject.toml", "uv.lock"):
+                p = src / name
+                if p.exists():
+                    shutil.copy2(p, APP_ROOT / name)
+            if uv:
+                _run([uv, "sync", "--frozen", "--no-dev"], APP_ROOT)
+        except Exception:
+            for name, data in manifests.items():
+                (APP_ROOT / name).write_bytes(data)
+            raise
 
         _swap_dir(src / "backend" / "app", APP_DIR)
         _swap_dir(new_dist, DIST_DIR)

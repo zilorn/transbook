@@ -50,8 +50,8 @@ cd frontend && bun run build        # 构建前端到 frontend/dist（后端会�
 cd frontend && bun run typecheck    # TypeScript 类型检查（tsc --noEmit）
 uv run uvicorn app.main:app --port 8300   # 在 backend/ 下单独起后端
 docker compose up -d --build              # Docker 一键部署：镜像内构建前端，数据卷挂 ./backend/data
-                                          # 可用 GIT_COMMIT=$(git rev-parse HEAD) GIT_REPO=$(git config --get remote.origin.url)
-                                          # 前缀注入构建信息（供容器内自动更新对比 commit），不传则首次检查收敛到最新
+                                          # 构建时自动从 .git 提取 commit/remote 写入镜像 build-info.json
+                                          # （gitmeta 阶段，供容器内自动更新对比；需从 git 检出目录构建）
 ```
 
 注意：后端固定用 **8300**。生产模式由 FastAPI 托管
@@ -157,7 +157,7 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   替换 `backend/app` 与 `frontend/dist` → SIGTERM 自杀，Docker 由 `restart: unless-stopped`
   拉起完成热更新（容器文件系统跨重启保留；非 Docker 只替换文件，提示手动重启）。
   当前版本 commit 优先级：`data/update_state.json` → 镜像 `build-info.json`
-  （Dockerfile 构建参数 GIT_COMMIT/GIT_REPO 写入；容器内无 .git）→ 本地 git。
+  （Dockerfile gitmeta 阶段构建时自动从 .git 提取 commit/remote；容器内无 git）→ 本地 git。
   更新源仓库取 `config.update_repo`（设置页可配），留空回退 build-info/git remote/默认
   `zilorn/transbook`；私有仓库配 `config.github_token`（GET /api/config 脱敏回显）。
   运行时镜像内置 bun（Dockerfile 从 oven/bun 复制），更新构建无需外部环境。

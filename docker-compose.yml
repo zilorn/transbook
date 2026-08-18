@@ -1,13 +1,6 @@
 services:
   transbook:
-    build:
-      context: .
-      args:
-        # 记录构建时的 commit/仓库，供容器内自动更新对比；可用环境变量注入：
-        #   GIT_COMMIT=$(git rev-parse HEAD) GIT_REPO=$(git config --get remote.origin.url) docker compose up -d --build
-        # 不传也可以：容器首次检查更新时会以"未知版本"更新到远端最新
-        GIT_COMMIT: ${GIT_COMMIT:-}
-        GIT_REPO: ${GIT_REPO:-}
+    build: .
     container_name: transbook
     ports:
       - "8300:8300"

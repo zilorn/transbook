@@ -8,6 +8,26 @@ COPY frontend/ frontend/
 WORKDIR /build/frontend
 RUN bun run build
 
+# ---------- 构建信息（commit/仓库，供自动更新对比，独立于运行镜像） ----------
+FROM python:3.12-slim AS gitmeta
+WORKDIR /tmp/m
+# .git* 同时匹配 .gitignore，保证无 .git 的构建上下文（如 tarball）也能构建；
+# 注意 COPY 目录只复制其内容，.git 的内容会直接落在 WORKDIR（HEAD/config/refs/...）
+COPY .git* ./
+RUN out='{"commit": "", "repo": ""}'; \
+    if [ -f HEAD ]; then \
+      head=$(cat HEAD); \
+      case "$head" in \
+        ref:*) ref=${head#ref: }; \
+               sha=$(cat "$ref" 2>/dev/null \
+                     || grep " $ref\$" packed-refs 2>/dev/null | cut -d' ' -f1) ;; \
+        *) sha=$head ;; \
+      esac; \
+      repo=$(sed -n '/\[remote "origin"\]/,/^\[/ s/^[[:space:]]*url = //p' config | head -1); \
+      out=$(printf '{"commit": "%s", "repo": "%s"}' "${sha:-}" "$repo"); \
+    fi; \
+    echo "$out" > /tmp/build-info.json
+
 # ---------- 后端运行 ----------
 FROM python:3.12-slim AS runtime
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
@@ -15,11 +35,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 COPY --from=oven/bun:1 /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 
-# 记录构建时的 commit/仓库，供自动更新与远端对比（容器内无 .git）；
-# 未传参时留空，自动更新会以"未知版本"收敛到远端最新
-ARG GIT_COMMIT=""
-ARG GIT_REPO=""
-RUN printf '{"commit": "%s", "repo": "%s"}\n' "$GIT_COMMIT" "$GIT_REPO" > /app/build-info.json
+# 构建时从 .git 提取的 commit/仓库（容器内无 git）
+COPY --from=gitmeta /tmp/build-info.json /app/build-info.json
 
 # Python 依赖（锁文件安装，进 /app/.venv）
 COPY pyproject.toml uv.lock ./
