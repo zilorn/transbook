@@ -46,6 +46,8 @@ export interface BookSummary {
   no_translate: boolean
   // 阅读进度：上次读到的章节（序号 + 标题，译名优先），从未阅读为 null
   read_progress?: { index: number; title: string } | null
+  // 最近阅读时间戳（秒），从未阅读为 null；列表按 max(最近阅读, 导入时间) 倒序
+  last_read_at?: number | null
 }
 
 export type ChapterStatus = 'pending' | 'translating' | 'done' | 'error'

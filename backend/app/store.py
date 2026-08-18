@@ -134,7 +134,7 @@ def save_read_progress(book_id: str, cid: str, y: float) -> None:
         p = _read_json(PROGRESS_PATH, {})
         if not isinstance(p, dict):
             p = {}
-        p[book_id] = {"cid": cid, "y": max(0.0, float(y))}
+        p[book_id] = {"cid": cid, "y": max(0.0, float(y)), "t": now()}
         _write_json(PROGRESS_PATH, p)
 
 
@@ -179,14 +179,21 @@ def list_books() -> list[dict]:
         # 阅读进度：上次读到的章节（序号 + 标题，译名优先），无记录为 None
         read_progress = None
         prog = prog_map.get(b["id"])
-        if isinstance(prog, dict) and isinstance(prog.get("cid"), str):
-            for i, c in enumerate(b.get("chapters", [])):
-                if c.get("id") == prog["cid"]:
-                    read_progress = {
-                        "index": i + 1,
-                        "title": c.get("title_translated") or c.get("title") or "",
-                    }
-                    break
+        last_read_at = 0.0
+        if isinstance(prog, dict):
+            try:
+                last_read_at = float(prog.get("t") or 0)
+            except (TypeError, ValueError):
+                last_read_at = 0.0
+            if isinstance(prog.get("cid"), str):
+                for i, c in enumerate(b.get("chapters", [])):
+                    if c.get("id") == prog["cid"]:
+                        read_progress = {
+                            "index": i + 1,
+                            "title": c.get("title_translated") or c.get("title") or "",
+                        }
+                        break
+        created_at = b.get("created_at") or 0
         out.append({
             "id": b["id"],
             "title": b.get("title") or "",
@@ -201,8 +208,13 @@ def list_books() -> list[dict]:
             "source": b.get("source"),
             "no_translate": bool(b.get("no_translate")),
             "read_progress": read_progress,
+            "last_read_at": last_read_at or None,
+            "_sort_at": max(last_read_at, float(created_at)),
         })
-    out.sort(key=lambda x: x.get("created_at") or 0, reverse=True)
+    # 书架排序：最近阅读的排最前；未阅读的按导入时间排（刚导入的靠前）
+    out.sort(key=lambda x: x["_sort_at"], reverse=True)
+    for x in out:
+        x.pop("_sort_at", None)
     return out
 
 
