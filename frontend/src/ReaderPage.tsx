@@ -1,6 +1,6 @@
 // 阅读器：全屏路由（不经侧边栏布局），桌面/移动端自适应。
 // 内容取译文优先、缺失回退原文；阅读进度存后端，字号/主题设置存 localStorage。
-import { createEffect, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
 import { api } from './api'
 import type { Book, Bookmark, Chapter } from './types'
@@ -438,8 +438,12 @@ export default function ReaderPage() {
     }
   }
 
+  // 章节内容只随“当前章”重载：经 memo 以引用比较屏蔽 book 整体替换
+  // （增删书签会 setBook 换对象但 chapters 数组/章对象引用不变），
+  // 否则 effect 订阅到 book 信号，加书签也会触发 loadChapter 清屏重载、丢滚动位置
+  const activeChapter = createMemo(() => chapter())
   createEffect(() => {
-    const c = chapter()
+    const c = activeChapter()
     if (c) void loadChapter(c)
   })
 
