@@ -75,7 +75,8 @@ def _spine_docs(book) -> list[tuple[str, object, str, object]]:
             continue
         html = item.get_content().decode("utf-8", errors="replace")
         soup = BeautifulSoup(html, "html.parser")
-        if not soup.get_text().strip():
+        # 跳过空文档；无文本但含图片的保留（封面/彩插等图片独占页）
+        if not soup.get_text().strip() and not soup.find(["img", "image", "svg"]):
             continue
         n += 1
         docs.append((f"ch{n:04d}", item, html, soup))
@@ -93,6 +94,9 @@ def parse_epub(path: Path) -> tuple[dict, list[dict]]:
     for n, (cid, item, html, soup) in enumerate(_spine_docs(book), 1):
         heading = soup.find(HEADING_TAGS)
         title = heading.get_text().strip() if heading else Path(item.get_name()).stem
+        if not soup.get_text().strip():
+            # 图片独占页（封面/彩插）没有标题，给个可读名
+            title = "封面" if "cover" in title.lower() else "插图"
         chapters.append({
             "id": cid,
             "title": title or f"第 {n} 章",

@@ -2,7 +2,7 @@
 // 内容取译文优先、缺失回退原文；阅读进度存后端，字号/主题设置存 localStorage。
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
-import { api } from './api'
+import { api, rewriteEpubImages } from './api'
 import type { Book, Bookmark, Chapter } from './types'
 
 type ThemeKey = 'light' | 'sepia' | 'night'
@@ -178,17 +178,9 @@ export default function ReaderPage() {
   }
 
   // epub 章节存的是完整 XHTML 文档；图片为 epub 内部相对路径，重写为后端图片接口
-  // （外链图保留原样，加载失败的图隐藏）；正文首个 h1-h3 与阅读器标题栏重复，去掉。
+  // （含 svg 封面/彩插的 <image xlink:href>）；正文首个 h1-h3 与阅读器标题栏重复，去掉。
   const processEpub = (html: string, cid: string): string =>
-    html
-      .replace(/<img\b[^>]*>/gi, (tag) => {
-        const m = tag.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
-        const src = m?.[1] ?? m?.[2] ?? m?.[3] ?? ''
-        if (!src) return ''
-        if (/^(?:https?:|data:|blob:)/i.test(src)) return tag
-        return tag.replace(m![0],
-          `src="${api.chapterImageUrl(bookId, cid, src)}" loading="lazy" onerror="this.style.display='none'"`)
-      })
+    rewriteEpubImages(html, bookId, cid)
       .replace(/<h[1-3]\b[^>]*>[\s\S]*?<\/h[1-3]>/i, '')
 
   const chapters = () => book()?.chapters || []
@@ -1049,6 +1041,8 @@ export default function ReaderPage() {
                       onClick={(e) => {
                         const t = e.target as HTMLElement
                         if (t.tagName === 'IMG') setPreviewImg((t as HTMLImageElement).src)
+                        else if (t.tagName === 'image') // svg 封面/彩插
+                          setPreviewImg(t.getAttribute('href') || t.getAttribute('xlink:href') || '')
                       }}
                       innerHTML={epubSeg()?.html ?? content()} />
                   </Show>

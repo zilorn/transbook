@@ -68,6 +68,12 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   回落为未分组（不删书）。写 JSON 用临时文件 + replace 原子替换（`store._write_json`）。
 - **章节格式**：每章带 `format`（`txt`/`epub`），允许混合（追加章节时可能不同）。
   epub 章节的正文保存完整 HTML，翻译时只替换叶子块级元素的文本，结构保持不变。
+  解析时无文本但含图片的 spine 文档保留为「封面」/「插图」章（图片独占页），只有空文档才跳过。
+- **epub 图片**：图片不进章节文件，阅读时经 `GET /api/books/{id}/chapters/{cid}/image?src=`
+  按章节文档路径解析相对 src（同名文件兜底）从原始 `source.epub` 的 zip 中读取。
+  前端统一用 `api.rewriteEpubImages`（阅读器 processEpub、详情页章节预览共用）把
+  `<img src>` 与 svg 封面/彩插的 `<image xlink:href>` 重写为该接口；外链图保留原样。
+  注意 `epub_chapter_files` 与 `parse_epub` 共用 `_spine_docs` 编号，二者必须同步修改。
 - **翻译协议**：正文按段落切成翻译单元，再按 `max_segment_chars` 分组（默认 8000，
   分段数尽量少），发给模型时带 `【N】` 编号标记，响应按编号解析回原文位置；
   缺失编号重试一次，仍缺失则保留原文。章节标题和书名用单独的提示词翻译，不走正文分段。

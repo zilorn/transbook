@@ -1,6 +1,6 @@
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
-import { api } from './api'
+import { api, rewriteEpubImages } from './api'
 import type { Book, Bookmark, Chapter, ChapterPreview, GlossaryTerm, SourceCheck } from './types'
 
 const CH_STATUS: Record<string, string> = { pending: '待翻译', translating: '翻译中', done: '已完成', error: '失败' }
@@ -16,6 +16,7 @@ const STATUS_BADGE: Record<string, string> = {
 
 interface PreviewState {
   title: string
+  cid: string
   format: string
   loading: boolean
   content: string
@@ -106,7 +107,7 @@ export default function BookDetail() {
   const openPreview = async (c: Chapter, translated: boolean) => {
     setPreview({
       title: translated ? (c.title_translated || c.title) : c.title,
-      format: c.format, loading: true, content: '', error: '',
+      cid: c.id, format: c.format, loading: true, content: '', error: '',
     })
     try {
       const content = await api.chapterContent(bookId, c.id, translated)
@@ -781,7 +782,8 @@ export default function BookDetail() {
                       <Show when={!p().error} fallback={<p class="text-danger text-[13px]">{p().error}</p>}>
                         <Show when={p().format === 'epub'}
                           fallback={<pre class="m-0 whitespace-pre-wrap break-words font-[inherit] text-[14px] leading-[1.7]">{p().content}</pre>}>
-                          <div class="preview-html text-[14px] leading-[1.7]" innerHTML={p().content} />
+                          <div class="preview-html text-[14px] leading-[1.7]"
+                            innerHTML={rewriteEpubImages(p().content, bookId, p().cid)} />
                         </Show>
                       </Show>
                     </Show>

@@ -108,6 +108,13 @@
     cursor: zoom-in;
   }
 
+  /* svg 封面/彩插（<svg><image/></svg>）：按 viewBox 等比缩放，不超出容器 */
+  .preview-html svg {
+    max-width: 100%;
+    height: auto;
+    cursor: zoom-in;
+  }
+
   /* 听书逐句高亮（txt 由 Solid 内联样式，epub 靠拆分文本节点后加此类） */
   .tts-active {
     background: rgba(250, 204, 21, 0.35);

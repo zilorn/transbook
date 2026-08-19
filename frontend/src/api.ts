@@ -206,3 +206,24 @@ export const api = {
     req(`/api/update/check${force ? '?force=true' : ''}`, { method: 'POST' }),
   updateApply: (): Promise<UpdateStatus> => req('/api/update/apply', { method: 'POST' }),
 }
+
+/** epub 章节 HTML 中的内嵌图重写为后端图片接口：`<img src>` 与 svg 封面/彩插常见的
+ * `<image xlink:href>` 都处理；外链图保留原样，加载失败的 img 隐藏。 */
+export function rewriteEpubImages(html: string, bookId: string, cid: string): string {
+  const url = (src: string) => api.chapterImageUrl(bookId, cid, src)
+  return html
+    .replace(/<img\b[^>]*>/gi, (tag) => {
+      const m = tag.match(/\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
+      const src = m?.[1] ?? m?.[2] ?? m?.[3] ?? ''
+      if (!src) return ''
+      if (/^(?:https?:|data:|blob:)/i.test(src)) return tag
+      return tag.replace(m![0],
+        `src="${url(src)}" loading="lazy" onerror="this.style.display='none'"`)
+    })
+    .replace(/<image\b[^>]*>/gi, (tag) => {
+      const m = tag.match(/\b(?:xlink:)?href\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i)
+      const src = m?.[1] ?? m?.[2] ?? m?.[3] ?? ''
+      if (!src || /^(?:https?:|data:|blob:)/i.test(src)) return tag
+      return tag.replace(m![0], `href="${url(src)}" xlink:href="${url(src)}"`)
+    })
+}
