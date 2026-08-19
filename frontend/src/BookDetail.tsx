@@ -1,6 +1,7 @@
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
 import { api, rewriteEpubImages } from './api'
+import { IconBack, IconTrash } from './icons'
 import type { Book, Bookmark, Chapter, ChapterPreview, GlossaryTerm, SourceCheck } from './types'
 
 const CH_STATUS: Record<string, string> = { pending: '待翻译', translating: '翻译中', done: '已完成', error: '失败' }
@@ -328,7 +329,8 @@ export default function BookDetail() {
     <Show when={book()} fallback={<p>加载中…</p>}>
       {(b) => (
         <div>
-          <button class="link" onClick={() => navigate('/')}>← 返回列表</button>
+          <button class="link inline-flex items-center" title="返回列表"
+            onClick={() => navigate('/')}><IconBack class="w-[18px] h-[18px]" /></button>
           <div>
             <div class="flex items-center gap-2 mt-3 mb-1">
               <h2 class="text-[1.5em] font-bold m-0">{b().title_translated || b().title}</h2>
@@ -482,9 +484,10 @@ export default function BookDetail() {
                         {bmChapterTitle(bm.cid)} · {new Date(bm.created_at * 1000).toLocaleString()}
                       </div>
                     </button>
-                    <button class="small danger shrink-0" disabled={busy()}
+                    <button class="small danger shrink-0 p-[6px] inline-flex items-center justify-center"
+                      title="删除书签" disabled={busy()}
                       onClick={() => act(() => api.removeBookmark(bookId, bm.id), '书签已删除')}>
-                      删除
+                      <IconTrash />
                     </button>
                   </div>
                 )}
@@ -644,7 +647,8 @@ export default function BookDetail() {
                       <td><input class="w-full px-2 py-[5px] border border-line rounded-[4px] text-[14px]"
                         placeholder="可选，如：女，主角的妹妹"
                         value={t.note || ''} onInput={(e) => setTerm(i(), 'note', e.currentTarget.value)} /></td>
-                      <td><button class="danger small" onClick={() => delTerm(i())}>删</button></td>
+                      <td><button class="danger small p-[6px] inline-flex items-center justify-center"
+                        title="删除该术语" onClick={() => delTerm(i())}><IconTrash /></button></td>
                     </tr>
                   )}
                 </For>

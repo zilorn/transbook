@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid
 import { useNavigate } from '@solidjs/router'
 import { api } from './api'
 import { config, loadConfig } from './state'
+import { IconTrash, IconX } from './icons'
 import type { ApiKeyEntry, QueueStatus, QueueStatusEntry } from './types'
 
 const KEY_INPUT = 'px-2.5 py-[7px] border border-line rounded-[6px] text-[13px] bg-bg focus:border-primary focus:outline-none'
@@ -140,7 +141,8 @@ export default function TranslatePage() {
                       <input class={`${KEY_INPUT} flex-1 font-mono`}
                         type="password" value={k.key} placeholder="sk-..."
                         onInput={(e) => setKey(i(), 'key', e.currentTarget.value)} />
-                      <button class="danger small shrink-0" title="删除该 Key" onClick={() => delKey(i())}>删</button>
+                      <button class="danger small shrink-0 p-[6px] inline-flex items-center justify-center"
+                        title="删除该 Key" onClick={() => delKey(i())}><IconTrash /></button>
                     </div>
                     <div class="flex gap-2 mt-2 ml-[44px]">
                       <input class={`${KEY_INPUT} flex-1`}
@@ -241,9 +243,10 @@ export default function TranslatePage() {
                 onClick={(ev) => { ev.stopPropagation(); navigate(`/books/${e.book_id}`) }}>
                 详情
               </button>
-              <button class="small danger shrink-0" disabled={busy() || e.running}
+              <button class="small danger shrink-0 p-[6px] inline-flex items-center justify-center"
+                title="从队列移除" disabled={busy() || e.running}
                 onClick={(ev) => { ev.stopPropagation(); act(() => api.dequeue(e.book_id)) }}>
-                移除
+                <IconX />
               </button>
             </div>
 

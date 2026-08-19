@@ -3,6 +3,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
 import { api, rewriteEpubImages } from './api'
+import { IconTrash, IconX } from './icons'
 import type { Book, Bookmark, Chapter } from './types'
 
 type ThemeKey = 'light' | 'sepia' | 'night'
@@ -1240,7 +1241,8 @@ export default function ReaderPage() {
                 书签（{bookmarks().length}）
               </button>
               <div class="flex-1" />
-              <button class="small" onClick={() => setTocOpen(false)}>关闭</button>
+              <button class="small p-[6px] inline-flex items-center justify-center" title="关闭"
+                onClick={() => setTocOpen(false)}><IconX /></button>
             </div>
             <Show when={tocTab() === 'toc'} fallback={
               <>
@@ -1258,8 +1260,8 @@ export default function ReaderPage() {
                             || chapters().find(c => c.id === bm.cid)?.title || '章节已删除'}
                         </div>
                       </button>
-                      <button class="small shrink-0" title="删除书签"
-                        onClick={() => delBookmark(bm)}>删</button>
+                      <button class="small shrink-0 p-[6px] inline-flex items-center justify-center" title="删除书签"
+                        onClick={() => delBookmark(bm)}><IconTrash /></button>
                     </div>
                   )}
                 </For>

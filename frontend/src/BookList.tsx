@@ -1,6 +1,7 @@
 import { createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { useNavigate } from '@solidjs/router'
 import { api } from './api'
+import { IconTrash, IconX } from './icons'
 import type { BookSummary, Group } from './types'
 
 const STATUS_TEXT: Record<string, string> = {
@@ -170,10 +171,10 @@ export default function BookList() {
               onClick={() => setActiveGroup(g.id)}>
               {g.name} {g.count}
               <span
-                class="opacity-50 hover:opacity-100 hover:text-danger px-0.5"
+                class="opacity-50 hover:opacity-100 hover:text-danger px-0.5 inline-flex items-center"
                 title="删除分组（书籍移回未分组）"
                 onClick={(e) => { e.stopPropagation(); removeGroup(g) }}>
-                ×
+                <IconX class="w-[11px] h-[11px]" />
               </span>
             </button>
           )}
@@ -226,7 +227,8 @@ export default function BookList() {
                     {(g) => <option value={g.id}>{g.name}</option>}
                   </For>
                 </select>
-                <button class="danger small" onClick={(e) => remove(e, b.id)}>删除</button>
+                <button class="danger small p-[6px] inline-flex items-center justify-center"
+                  title="删除书籍及其全部翻译数据" onClick={(e) => remove(e, b.id)}><IconTrash /></button>
               </div>
             </div>
           )}
