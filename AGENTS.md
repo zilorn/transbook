@@ -33,10 +33,11 @@ backend/
   data/            # 运行时数据（书籍、译文、配置、翻译队列），已 gitignore
 frontend/
   src/index.tsx  App.tsx（HashRouter + 响应式布局：桌面侧边栏，移动端顶栏+抽屉菜单）  state.ts（全局 config/设置弹窗信号）
-  BookList.tsx  BookDetail.tsx  ReaderPage.tsx（阅读器）  TranslatePage.tsx  SearchPage.tsx  DiscoverPage.tsx  Settings.tsx
+  BookList.tsx  BookDetail.tsx  ReaderPage.tsx（阅读器）  BookSearchPage.tsx（全书搜索）  TranslatePage.tsx  SearchPage.tsx  DiscoverPage.tsx  Settings.tsx
   CrawlJobs.tsx（搜索页/发现页共用的爬取任务列表 + 2s 轮询）  UpdatePrompt.tsx（更新弹窗）  api.ts  types.ts
-  路由：/ 书库、/books/:id 书籍详情、/books/:id/read(/:cid) 阅读器、/queue 翻译队列、/search 小说搜索
-  （爬虫）、/discover 发现（排行榜）；用 HashRouter 是因后端 StaticFiles 无 SPA 回退，
+  路由：/ 书库、/books/:id 书籍详情、/books/:id/read(/:cid) 阅读器、/books/:id/search 全书搜索、
+  /queue 翻译队列、/search 小说搜索（爬虫）、/discover 发现（排行榜）；用 HashRouter 是因后端
+  StaticFiles 无 SPA 回退，
   history 模式刷新深链接会 404。页面间跳转一律 useNavigate。
 ```
 
@@ -140,6 +141,10 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   （`\p{L}\p{N}`）字符所在的句（首字符是标点则顺延）。书签查看/删除：目录抽屉「书签」页签 +
   书籍详情页「书签」标签页；跳转页内直接 `scrollIntoView`，跨页经 sessionStorage
   `reader-jump:<bookId>`（60s 内有效，消费即删），跳转到目标章时不恢复旧滚动位置。
+  全书搜索（BookSearchPage，阅读器顶栏放大镜进入）纯前端逐章拉内容匹配（译文优先，
+  epub 去标签取纯文本，4 并发，500 条上限）；点结果经 sessionStorage `reader-find:<bookId>`
+  （`{cid, q, ts}`，同 60s 约定）跳阅读器，由 `findAndScroll` 在渲染后 DOM 找首个命中、
+  滚动并 `.find-flash` 闪烁高亮 2.4s。
 - **界面中文化**：搜索/排行榜返回的 `status`（已完结/连载中/短篇）、`genre`、筛选项
   显示名一律后端出中文（`syosetu._GENRE_TEXT_ZH`、`kakuyomu.GENRES` 值），前端不做映射。
 - **WebDAV**：`webdav.py` 在 `/webdav/` 实现只读 WebDAV（OPTIONS/PROPFIND/GET/HEAD，

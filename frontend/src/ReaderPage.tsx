@@ -782,8 +782,42 @@ export default function ReaderPage() {
     }
   })
 
-  // 书签跳转：本章内容加载完成后滚到书签句。pendingJump 为页内跳转；
-  // 跨页跳转（书籍详情页）经 sessionStorage 传入（60s 内有效，消费即删）
+  // 全书搜索结果定位（BookSearchPage 经 sessionStorage reader-find 传入）：
+  // 在渲染后的正文 DOM 里找首个命中文本（不区分大小写），滚动到视野中部
+  // 并用 .find-flash 临时高亮（2.4s 后拆除包裹还原）
+  const findAndScroll = (q: string) => {
+    const root = contentRef
+    if (!root || !q) return
+    const ql = q.toLowerCase()
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const i = (n.textContent || '').toLowerCase().indexOf(ql)
+      if (i < 0) continue
+      try {
+        const r = document.createRange()
+        r.setStart(n, i)
+        r.setEnd(n, i + q.length)
+        const mark = document.createElement('span')
+        mark.className = 'find-flash'
+        r.surroundContents(mark)
+        mark.scrollIntoView({ block: 'center' })
+        setTimeout(() => {
+          const p = mark.parentNode
+          if (!p) return
+          while (mark.firstChild) p.insertBefore(mark.firstChild, mark)
+          p.removeChild(mark)
+          p.normalize()
+        }, 2400)
+      } catch {
+        ;(n as Text).parentElement?.scrollIntoView({ block: 'center' })
+      }
+      return
+    }
+  }
+
+  // 书签/搜索跳转：本章内容加载完成后定位。pendingJump 为页内书签跳转；
+  // 跨页书签跳转经 sessionStorage reader-jump 传入，全书搜索结果经
+  // reader-find 传入（均 60s 内有效，消费即删）
   createEffect(() => {
     const cid = contentCid()
     if (!cid) return
@@ -796,16 +830,27 @@ export default function ReaderPage() {
       try {
         const key = `reader-jump:${bookId}`
         const j = JSON.parse(sessionStorage.getItem(key) || 'null')
-        if (!j) return
-        if (Date.now() - Number(j.ts) > 60_000) { sessionStorage.removeItem(key); return }
-        if (j.cid !== cid) return
-        sessionStorage.removeItem(key)
-        si = Number(j.si)
-      } catch { return }
+        if (j) {
+          if (Date.now() - Number(j.ts) > 60_000) sessionStorage.removeItem(key)
+          else if (j.cid === cid) { sessionStorage.removeItem(key); si = Number(j.si) }
+        }
+      } catch { /* 忽略 */ }
     }
-    if (si == null || Number.isNaN(si)) return
-    requestAnimationFrame(() => requestAnimationFrame(() =>
-      document.querySelector(`[data-si="${si}"]`)?.scrollIntoView({ block: 'center' })))
+    if (si != null && !Number.isNaN(si)) {
+      requestAnimationFrame(() => requestAnimationFrame(() =>
+        document.querySelector(`[data-si="${si}"]`)?.scrollIntoView({ block: 'center' })))
+      return
+    }
+    // 全书搜索跳转：定位到本章首个命中处并闪烁高亮
+    try {
+      const key = `reader-find:${bookId}`
+      const j = JSON.parse(sessionStorage.getItem(key) || 'null')
+      if (!j) return
+      if (Date.now() - Number(j.ts) > 60_000) { sessionStorage.removeItem(key); return }
+      if (j.cid !== cid || typeof j.q !== 'string') return
+      sessionStorage.removeItem(key)
+      requestAnimationFrame(() => requestAnimationFrame(() => findAndScroll(j.q)))
+    } catch { /* 忽略 */ }
   })
 
   // ---- 进度记忆（滚动节流保存到后端）----
@@ -932,6 +977,14 @@ export default function ReaderPage() {
                 <span class="opacity-50 text-[12px] ml-2">{idx() + 1}/{chapters().length}</span></>}
             </Show>
           </div>
+          <button class="border-0 px-2 shrink-0" title="全书搜索"
+            onClick={() => navigate(`/books/${bookId}/search`)}>
+            <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <path d="m21 21-4.3-4.3" />
+            </svg>
+          </button>
           <button class="border-0 px-2 shrink-0" title="听书"
             onClick={toggleTts}>
             <svg class="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor"

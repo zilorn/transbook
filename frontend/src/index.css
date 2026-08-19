@@ -115,6 +115,17 @@
     transition: background 0.2s;
   }
 
+  /* 全书搜索跳转命中处的临时高亮（阅读器 findAndScroll，约 2.4s 后拆除） */
+  .find-flash {
+    background: rgba(250, 204, 21, 0.55);
+    border-radius: 3px;
+    animation: find-flash-fade 2.4s ease-out forwards;
+  }
+  @keyframes find-flash-fade {
+    0%, 60% { background: rgba(250, 204, 21, 0.55); }
+    100% { background: rgba(250, 204, 21, 0); }
+  }
+
   /* 书签句：橙色下划线 */
   .bm-mark {
     text-decoration: underline;

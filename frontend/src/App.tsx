@@ -7,6 +7,7 @@ import UpdatePrompt from './UpdatePrompt'
 const BookList = lazy(() => import('./BookList'))
 const BookDetail = lazy(() => import('./BookDetail'))
 const ReaderPage = lazy(() => import('./ReaderPage'))
+const BookSearchPage = lazy(() => import('./BookSearchPage'))
 const TranslatePage = lazy(() => import('./TranslatePage'))
 const SearchPage = lazy(() => import('./SearchPage'))
 const DiscoverPage = lazy(() => import('./DiscoverPage'))
@@ -160,6 +161,7 @@ export default function App() {
       <Route path="/books/:id" component={BookDetail} />
       <Route path="/books/:id/read" component={ReaderPage} />
       <Route path="/books/:id/read/:cid" component={ReaderPage} />
+      <Route path="/books/:id/search" component={BookSearchPage} />
       <Route path="/queue" component={TranslatePage} />
       <Route path="/search" component={SearchPage} />
       <Route path="/discover" component={DiscoverPage} />
