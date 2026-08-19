@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
 
@@ -46,7 +47,7 @@ _SEARCH_QUERY = """query Search($query: String!, $genres: [Work_Genre!]) {
 
 _WORK_QUERY = """query Work($workId: ID!) {
   work(id: $workId) {
-    id title introduction
+    id title introduction lastEpisodePublishedAt
     author { name activityName }
     tableOfContents {
       ... on TableOfContentsChapter {
@@ -113,6 +114,17 @@ async def search(query: str, genres: list[str] | None = None) -> list[dict]:
     return out
 
 
+def _fmt_jst(iso: str | None) -> str | None:
+    """ISO8601（UTC）→ 站点本地（JST）显示串 YYYY-MM-DD HH:MM。"""
+    if not iso:
+        return None
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.astimezone(timezone(timedelta(hours=9))).strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+
+
 async def fetch_info(work_id: str) -> dict:
     """作品信息 + 完整目录（GraphQL 一次返回全部话数，含分章作品）。"""
     data = await _gql(_WORK_QUERY, {"workId": work_id})
@@ -135,6 +147,7 @@ async def fetch_info(work_id: str) -> dict:
         "author": author.get("activityName") or author.get("name") or "",
         "synopsis": (work.get("introduction") or "").strip(),
         "episodes": episodes,
+        "last_update": _fmt_jst(work.get("lastEpisodePublishedAt")),
     }
 
 

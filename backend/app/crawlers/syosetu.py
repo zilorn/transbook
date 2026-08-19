@@ -62,12 +62,26 @@ async def search(query: str) -> list[dict]:
     return out
 
 
+_EP_DATE_RE = re.compile(r"(\d{4})/(\d{2})/(\d{2}) (\d{2}):(\d{2})")
+
+
 def _parse_episodes(soup: BeautifulSoup, ncode: str) -> list[dict]:
+    """目录话条目：{ep, title, date}，date 为站点显示的发布时间（YYYY-MM-DD HH:MM）。"""
     eps = []
-    for a in soup.select("a.p-eplist__subtitle"):
+    for sub in soup.select(".p-eplist__sublist"):
+        a = sub.select_one("a.p-eplist__subtitle")
+        if not a:
+            continue
         m = re.search(rf"/{re.escape(ncode)}/(\d+)/", a.get("href", ""))
-        if m:
-            eps.append({"ep": int(m.group(1)), "title": a.get_text(strip=True)})
+        if not m:
+            continue
+        date = None
+        upd = sub.select_one(".p-eplist__update")
+        if upd:
+            d = _EP_DATE_RE.search(upd.get_text(" ", strip=True))
+            if d:
+                date = f"{d.group(1)}-{d.group(2)}-{d.group(3)} {d.group(4)}:{d.group(5)}"
+        eps.append({"ep": int(m.group(1)), "title": a.get_text(strip=True), "date": date})
     return eps
 
 
@@ -94,7 +108,8 @@ async def fetch_info(ncode: str) -> dict:
     episodes = _parse_episodes(soup, ncode)
     if not episodes:
         return {"title": title, "author": author, "synopsis": synopsis,
-                "short": True, "episodes": [{"ep": 1, "title": title}]}
+                "short": True, "episodes": [{"ep": 1, "title": title}],
+                "last_update": None}
 
     seen = {e["ep"] for e in episodes}
     # 分页器只露出「次へ/最後」等少数页码，需以最大页码为界逐页抓全
@@ -106,8 +121,10 @@ async def fetch_info(ncode: str) -> dict:
                 seen.add(e["ep"])
                 episodes.append(e)
     episodes.sort(key=lambda e: e["ep"])
+    dates = [e["date"] for e in episodes if e.get("date")]
     return {"title": title, "author": author, "synopsis": synopsis,
-            "short": False, "episodes": episodes}
+            "short": False, "episodes": episodes,
+            "last_update": max(dates) if dates else None}
 
 
 async def fetch_chapter(ncode: str, ep: int, short: bool = False) -> tuple[str, str]:

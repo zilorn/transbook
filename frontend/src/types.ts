@@ -132,6 +132,18 @@ export interface Book {
   bookmarks?: Bookmark[]
   // 所属分组 id，未分组为 null
   group_id?: string | null
+  // 来源章节比对结果缓存（POST /api/books/{id}/source/check 写入）
+  source_check?: SourceCheck | null
+}
+
+// 来源站点章节比对结果：远端总话数 / 本地章数 / 落后章数 / 远端最新更新时间
+export interface SourceCheck {
+  remote_total: number
+  local_total: number
+  missing: number
+  // 远端最新章节更新时间（YYYY-MM-DD HH:MM，站点时区），取不到为 null
+  last_update: string | null
+  checked_at: number
 }
 
 // 追加章节时提交的条目

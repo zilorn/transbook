@@ -88,6 +88,13 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   3 次（规避风控）；每个站点模块各持有一个 HttpGate 实例。抓取任务生命周期统一由
   `tasks.CrawlRunner` 管理：站点模块注入 `source_key`/`fetch_info`/`fetch_chapter` 回调，
   抓取逐章落盘，中断不丢已抓部分；增量更新按 `src_ep` diff 只抓缺失话数。
+  `fetch_info` 额外返回 `last_update`（远端最新章节发布时间，统一 YYYY-MM-DD HH:MM：
+  syosetu 解析目录页 `.p-eplist__update`，kakuyomu 取 GraphQL `lastEpisodePublishedAt`
+  转 JST）。`POST /api/books/{id}/source/check` 只读比对远端目录与本地章节（不抓取），
+  返回 `{remote_total, local_total, missing, last_update, checked_at}` 并缓存进
+  book.json 的 `source_check`（`SOURCE_CHECK_COOLDOWN` 10 分钟内非 force 直接返回缓存，
+  避免 syosetu 目录翻页重复打站点）；书籍详情页据此显示「最新更新」与可点击的
+  「章节落后 N 章」提示。
 - **听书（edge-tts，逐句）**：**前端自行分句、直接把每句文本发给后端合成**——渲染的句
   与朗读的句天然是同一份，逐句高亮必然对齐，后端不参与分句/对齐。`POST /api/tts/speak`
   （`{text, voice, rate}`）合成任意文本为 mp3，按 `sha1(音色+倍速+文本)` 全局缓存到

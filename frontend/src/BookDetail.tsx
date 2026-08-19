@@ -1,7 +1,7 @@
 import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { useNavigate, useParams } from '@solidjs/router'
 import { api } from './api'
-import type { Book, Bookmark, Chapter, ChapterPreview, GlossaryTerm } from './types'
+import type { Book, Bookmark, Chapter, ChapterPreview, GlossaryTerm, SourceCheck } from './types'
 
 const CH_STATUS: Record<string, string> = { pending: '待翻译', translating: '翻译中', done: '已完成', error: '失败' }
 
@@ -132,7 +132,8 @@ export default function BookDetail() {
     if (statusMenuRef && !statusMenuRef.contains(e.target as Node)) setStatusMenuOpen(false)
   }
   onMount(() => {
-    refresh()
+    // 有网络来源的书进页面即后台比对一次远端目录（服务端有冷却缓存）
+    refresh().then(() => { if (book()?.source) void runSourceCheck() })
     document.addEventListener('pointerdown', onDocPointerDown)
     timer = setInterval(() => {
       const b = book()
@@ -281,6 +282,20 @@ export default function BookDetail() {
 
   // ---- 来源站点增量更新（仅抓新章节）----
   const [updating, setUpdating] = createSignal(false)
+  // ---- 来源章节比对：远端最新更新时间 / 落后章数（结果缓存于 book.source_check）----
+  const [srcCheck, setSrcCheck] = createSignal<SourceCheck | null>(null)
+  const [srcChecking, setSrcChecking] = createSignal(false)
+  const check = () => srcCheck() ?? book()?.source_check ?? null
+  const runSourceCheck = async (force = false) => {
+    setSrcChecking(true)
+    try {
+      setSrcCheck(await api.sourceCheck(bookId, force))
+    } catch {
+      // 检查失败静默：不影响详情页其他功能
+    } finally {
+      setSrcChecking(false)
+    }
+  }
   const updateFromSource = async () => {
     setUpdating(true)
     setError('')
@@ -300,6 +315,7 @@ export default function BookDetail() {
         }
       }
       await refresh()
+      void runSourceCheck(true) // 更新完成后强制重查，刷新落后提示
     } catch (e: any) {
       setError(String(e.message || e))
     } finally {
@@ -347,6 +363,23 @@ export default function BookDetail() {
                   title={`作品页：${b().source!.url}`}>
                   来源：{b().source!.site}{b().source!.site === 'kakuyomu' ? '.jp' : '.com'} ↗
                 </a>
+                {/* 来源比对：远端最新更新时间 + 落后章数提示（点击落后 badge 直接增量更新） */}
+                <Show when={check()?.last_update}>
+                  <span class={BADGE} title="来源站点最新章节的发布时间">
+                    最新更新：{check()!.last_update}
+                  </span>
+                </Show>
+                <Show when={!check() && srcChecking()}>
+                  <span class={BADGE}>正在检查来源更新…</span>
+                </Show>
+                <Show when={(check()?.missing ?? 0) > 0}>
+                  <button class={`${BADGE_BASE} bg-[#fef3c7] text-[#92400e] cursor-pointer`}
+                    disabled={busy() || b().running || updating()}
+                    title={`来源站点共 ${check()!.remote_total} 话，本地 ${check()!.local_total} 章；点击抓取缺失章节`}
+                    onClick={updateFromSource}>
+                    章节落后 {check()!.missing} 章，点击更新
+                  </button>
+                </Show>
               </Show>
             </div>
             <Show when={!b().no_translate}>

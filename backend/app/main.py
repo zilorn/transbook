@@ -6,6 +6,7 @@ import logging
 import mimetypes
 import posixpath
 import re
+import time
 import zipfile
 from pathlib import Path
 from urllib.parse import unquote
@@ -782,6 +783,59 @@ async def kakuyomu_update(book_id: str):
     if not kakuyomu.start_update(book_id):
         raise HTTPException(409, "该书已有爬取任务在运行")
     return {"ok": True}
+
+
+# ---------- 来源章节比对（落后提示） ----------
+
+# site -> (book["source"] 中的作品 ID 键, fetch_info)
+_SOURCE_FETCHERS = {
+    "syosetu": ("ncode", syosetu.fetch_info),
+    "kakuyomu": ("work_id", kakuyomu.fetch_info),
+}
+
+# 检查结果缓存冷却（秒）：syosetu 目录需翻页抓取，避免每次进详情页都打站点
+SOURCE_CHECK_COOLDOWN = 600
+
+
+@app.post("/api/books/{book_id}/source/check")
+async def source_check(book_id: str, force: bool = False):
+    """只读比对远端目录与本地章节（不抓取），返回落后章数与远端最新更新时间。
+
+    结果缓存进 book.json 的 source_check，冷却期内（非 force）直接返回缓存。
+    """
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    src = book.get("source")
+    if not src:
+        raise HTTPException(400, "该书没有网络来源，无法检查")
+    cached = book.get("source_check")
+    if cached and not force:
+        try:
+            if time.time() - float(cached.get("checked_at") or 0) < SOURCE_CHECK_COOLDOWN:
+                return cached
+        except (TypeError, ValueError):
+            pass
+    entry = _SOURCE_FETCHERS.get(src.get("site") or "")
+    if not entry:
+        raise HTTPException(400, "未知来源站点")
+    source_key, fetch_info = entry
+    try:
+        info = await fetch_info(src[source_key])
+    except Exception as e:
+        raise HTTPException(502, f"来源检查失败: {e}")
+    existing = {c.get("src_ep") for c in book["chapters"]}
+    missing = sum(1 for e in info["episodes"] if e["ep"] not in existing)
+    res = {
+        "remote_total": len(info["episodes"]),
+        "local_total": len(book["chapters"]),
+        "missing": missing,
+        "last_update": info.get("last_update"),
+        "checked_at": time.time(),
+    }
+    book["source_check"] = res
+    store.save_book(book)
+    return res
 
 
 # ---------- 翻译控制 ----------

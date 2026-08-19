@@ -11,6 +11,7 @@ import type {
   KakuyomuResult,
   NewChapter,
   QueueStatus,
+  SourceCheck,
   SyosetuRankingsResult,
   SyosetuResult,
   TranslateOptions,
@@ -193,6 +194,8 @@ export const api = {
     req(`/api/kakuyomu/stop/${id}`, { method: 'POST' }),
   kakuyomuUpdate: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}/kakuyomu/update`, { method: 'POST' }),
+  sourceCheck: (id: string, force = false): Promise<SourceCheck> =>
+    req(`/api/books/${id}/source/check${force ? '?force=true' : ''}`, { method: 'POST' }),
   syosetuRankings: (period: string, genre: string, kind: string): Promise<SyosetuRankingsResult> =>
     req(`/api/syosetu/rankings?period=${period}&genre=${genre}&kind=${kind}`),
   kakuyomuRankings: (genre: string, period: string, variation: string): Promise<KakuyomuRankingsResult> =>
