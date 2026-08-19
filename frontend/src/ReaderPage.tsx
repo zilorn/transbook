@@ -197,7 +197,14 @@ export default function ReaderPage() {
   const theme = () => THEMES[settings().theme]
 
   // ---- 书签（选中文本添加；句号定位 + 句内字符区间，下划线精确到选取的字）----
-  const bookmarks = (): Bookmark[] => book()?.bookmarks ?? []
+  // 展示按章节顺序排序（章节序 → 句号；章节已删除的排最后），内部数据仍按添加顺序存
+  const bookmarks = (): Bookmark[] => {
+    const list = book()?.bookmarks ?? []
+    const chIdx = new Map(chapters().map((c, i) => [c.id, i]))
+    return [...list].sort((a, b) =>
+      (chIdx.get(a.cid) ?? Number.MAX_SAFE_INTEGER) - (chIdx.get(b.cid) ?? Number.MAX_SAFE_INTEGER)
+      || Math.min(...a.sis) - Math.min(...b.sis))
+  }
   // 当前章节被书签覆盖的句号集合（用于选取命中判断 / 旧数据整句划线）
   const bmSis = (): Set<number> =>
     new Set(bookmarks().filter(b => b.cid === params.cid).flatMap(b => b.sis))

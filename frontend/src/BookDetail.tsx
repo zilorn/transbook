@@ -229,7 +229,14 @@ export default function BookDetail() {
   const doneCount = () => (book()?.chapters || []).filter(c => c.status === 'done').length
 
   // ---- 书签（阅读器选中文本添加）----
-  const bookmarks = (): Bookmark[] => book()?.bookmarks ?? []
+  // 展示按章节顺序排序（章节序 → 句号；章节已删除的排最后），内部数据仍按添加顺序存
+  const bookmarks = (): Bookmark[] => {
+    const list = book()?.bookmarks ?? []
+    const chIdx = new Map((book()?.chapters ?? []).map((c, i) => [c.id, i]))
+    return [...list].sort((a, b) =>
+      (chIdx.get(a.cid) ?? Number.MAX_SAFE_INTEGER) - (chIdx.get(b.cid) ?? Number.MAX_SAFE_INTEGER)
+      || Math.min(...a.sis) - Math.min(...b.sis))
+  }
   const bmChapterTitle = (cid: string) => {
     const c = book()?.chapters.find(x => x.id === cid)
     return c ? (c.title_translated || c.title) : '章节已删除'
