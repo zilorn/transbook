@@ -894,14 +894,19 @@ export default function ReaderPage() {
     actx = undefined
   })
 
-  // 打开目录时滚动到当前章；同时锁定正文滚动，防止抽屉滚动穿透到正文
+  // 打开目录时锁定正文滚动，防止抽屉滚动穿透到正文
   let tocRef: HTMLDivElement | undefined
   createEffect(() => {
     if (tocOpen()) {
       document.body.style.overflow = 'hidden'
+      onCleanup(() => { document.body.style.overflow = '' })
+    }
+  })
+  // 目录列表每次可见（打开抽屉、从书签页签切回、章节加载完成）都滚动到当前章并高亮
+  createEffect(() => {
+    if (tocOpen() && tocTab() === 'toc' && chapters().length) {
       requestAnimationFrame(() =>
         tocRef?.querySelector('[data-active="true"]')?.scrollIntoView({ block: 'center' }))
-      onCleanup(() => { document.body.style.overflow = '' })
     }
   })
 
