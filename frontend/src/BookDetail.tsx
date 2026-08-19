@@ -388,7 +388,7 @@ export default function BookDetail() {
                   <button class="primary rounded-r-none" disabled={busy() || b().running}
                     title="选择翻译类型与章节范围后加入翻译队列"
                     onClick={openQueueDialog}>
-                    {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
+                    排队翻译
                   </button>
                   <button class="rounded-none -ml-px" disabled={busy() || b().running}
                     onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
