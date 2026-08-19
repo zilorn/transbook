@@ -14,6 +14,7 @@ BOOKS_DIR = DATA_DIR / "books"
 CONFIG_PATH = DATA_DIR / "config.json"
 QUEUE_PATH = DATA_DIR / "queue.json"
 PROGRESS_PATH = DATA_DIR / "progress.json"
+GROUPS_PATH = DATA_DIR / "groups.json"
 
 DEFAULT_CONFIG = {
     "api_key": "",
@@ -116,6 +117,45 @@ def dequeue_book(book_id: str) -> list[dict]:
     return q
 
 
+# ---------- 分组 ----------
+
+def load_groups() -> list[dict]:
+    gs = _read_json(GROUPS_PATH, [])
+    if not isinstance(gs, list):
+        return []
+    return [g for g in gs
+            if isinstance(g, dict) and g.get("id") and isinstance(g.get("name"), str)]
+
+
+def save_groups(groups: list[dict]) -> None:
+    with _lock:
+        _write_json(GROUPS_PATH, groups)
+
+
+def create_group(name: str) -> dict:
+    g = {"id": uuid.uuid4().hex[:8], "name": name, "created_at": now()}
+    gs = load_groups()
+    gs.append(g)
+    save_groups(gs)
+    return g
+
+
+def delete_group(group_id: str) -> bool:
+    gs = load_groups()
+    kept = [g for g in gs if g["id"] != group_id]
+    if len(kept) == len(gs):
+        return False
+    save_groups(kept)
+    # 组内书籍回落为未分组
+    for p in BOOKS_DIR.glob("*/book.json"):
+        b = _read_json(p, None)
+        if b and b.get("group_id") == group_id:
+            b["group_id"] = None
+            with _lock:
+                _write_json(p, b)
+    return True
+
+
 # ---------- 阅读进度 ----------
 
 def get_read_progress(book_id: str) -> dict | None:
@@ -210,6 +250,7 @@ def list_books() -> list[dict]:
             "glossary_count": len(b.get("glossary") or []),
             "source": b.get("source"),
             "no_translate": bool(b.get("no_translate")),
+            "group_id": b.get("group_id"),
             "read_progress": read_progress,
             "last_read_at": last_read_at or None,
             "_sort_at": max(last_read_at, float(created_at)),

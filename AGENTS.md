@@ -62,8 +62,9 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
 ## 关键约定
 
 - **持久化**：不用数据库。每本书一个目录 `backend/data/books/<id>/`：
-  `book.json`（清单+进度+术语表）、`source.*`、`chapters/<cid>.src|.dst`、导出文件。
-  写 JSON 用临时文件 + replace 原子替换（`store._write_json`）。
+  `book.json`（清单+进度+术语表+所属分组 `group_id`）、`source.*`、`chapters/<cid>.src|.dst`、
+  导出文件。书架分组存 `data/groups.json`（`{id, name, created_at}`），删除分组时组内书籍
+  回落为未分组（不删书）。写 JSON 用临时文件 + replace 原子替换（`store._write_json`）。
 - **章节格式**：每章带 `format`（`txt`/`epub`），允许混合（追加章节时可能不同）。
   epub 章节的正文保存完整 HTML，翻译时只替换叶子块级元素的文本，结构保持不变。
 - **翻译协议**：正文按段落切成翻译单元，再按 `max_segment_chars` 分组（默认 8000，

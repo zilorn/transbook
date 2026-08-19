@@ -6,6 +6,7 @@ import type {
   Config,
   CrawlStatus,
   GlossaryTerm,
+  Group,
   KakuyomuRankingsResult,
   KakuyomuResult,
   NewChapter,
@@ -73,6 +74,20 @@ export const api = {
     }),
   deleteBook: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/books/${id}`, { method: 'DELETE' }),
+  groups: (): Promise<Group[]> => req('/api/groups'),
+  createGroup: (name: string): Promise<Group> => req('/api/groups', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  }),
+  deleteGroup: (id: string): Promise<{ ok: boolean }> =>
+    req(`/api/groups/${id}`, { method: 'DELETE' }),
+  setBookGroup: (id: string, groupId: string | null): Promise<{ ok: boolean; group_id: string | null }> =>
+    req(`/api/books/${id}/group`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: groupId }),
+    }),
   setNoTranslate: (id: string, noTranslate: boolean): Promise<{ ok: boolean; no_translate: boolean }> =>
     req(`/api/books/${id}/no_translate`, {
       method: 'PUT',

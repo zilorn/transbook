@@ -362,6 +362,58 @@ class NoTranslateIn(BaseModel):
     no_translate: bool
 
 
+# ---------- 分组（书架分组：创建/删除/把书加入或移出分组） ----------
+
+class GroupIn(BaseModel):
+    name: str
+
+
+@app.get("/api/groups")
+def list_groups():
+    groups = store.load_groups()
+    counts: dict[str, int] = {}
+    for b in store.list_books():
+        gid = b.get("group_id")
+        if gid:
+            counts[gid] = counts.get(gid, 0) + 1
+    return [{**g, "count": counts.get(g["id"], 0)} for g in groups]
+
+
+@app.post("/api/groups")
+def add_group(body: GroupIn):
+    name = body.name.strip()[:50]
+    if not name:
+        raise HTTPException(400, "分组名不能为空")
+    if any(g["name"] == name for g in store.load_groups()):
+        raise HTTPException(400, "同名分组已存在")
+    return store.create_group(name)
+
+
+@app.delete("/api/groups/{group_id}")
+def remove_group(group_id: str):
+    """删除分组；组内书籍回落为未分组（不删书）。"""
+    if not store.delete_group(group_id):
+        raise HTTPException(404, "分组不存在")
+    return {"ok": True}
+
+
+class BookGroupIn(BaseModel):
+    group_id: str | None = None  # null = 移出分组（未分组）
+
+
+@app.put("/api/books/{book_id}/group")
+def set_book_group(book_id: str, body: BookGroupIn):
+    book = store.load_book(book_id)
+    if not book:
+        raise HTTPException(404, "书籍不存在")
+    gid = body.group_id or None
+    if gid and not any(g["id"] == gid for g in store.load_groups()):
+        raise HTTPException(404, "分组不存在")
+    book["group_id"] = gid
+    store.save_book(book)
+    return {"ok": True, "group_id": gid}
+
+
 @app.put("/api/books/{book_id}/no_translate")
 def set_no_translate(book_id: str, body: NoTranslateIn):
     """标记/取消"无需翻译"：仅托管（阅读/导出/WebDAV），不参与任何翻译任务。"""

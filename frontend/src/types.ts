@@ -49,6 +49,13 @@ export interface BookSource {
   work_id?: string
 }
 
+// GET /api/groups 的条目（书架分组）
+export interface Group {
+  id: string
+  name: string
+  count: number
+}
+
 // GET /api/books 的列表条目
 export interface BookSummary {
   id: string
@@ -64,6 +71,8 @@ export interface BookSummary {
   source?: BookSource | null
   // 无需翻译标记：仅托管（阅读/导出/WebDAV），不参与翻译
   no_translate: boolean
+  // 所属分组 id，未分组为 null
+  group_id?: string | null
   // 阅读进度：上次读到的章节（序号 + 标题，译名优先），从未阅读为 null
   read_progress?: { index: number; title: string } | null
   // 最近阅读时间戳（秒），从未阅读为 null；列表按 max(最近阅读, 导入时间) 倒序
@@ -121,6 +130,8 @@ export interface Book {
   no_translate?: boolean
   // 阅读器书签（旧数据没有该字段）
   bookmarks?: Bookmark[]
+  // 所属分组 id，未分组为 null
+  group_id?: string | null
 }
 
 // 追加章节时提交的条目
