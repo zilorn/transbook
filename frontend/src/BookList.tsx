@@ -77,8 +77,10 @@ export default function BookList() {
   const refresh = async () => {
     try {
       const [bs, gs] = await Promise.all([api.books(), api.groups()])
-      setBooks(bs)
+      // 先分组后书籍：卡片分组下拉框的 value 只在行重建时应用一次（不跟踪 groups()），
+      // 若后更新分组，下拉框的 option 会被整组重建，已选中的分组显示被重置回"未分组"
       setGroups(gs)
+      setBooks(bs)
       // 当前选中的分组已被删除时回退到"全部"
       const g = activeGroup()
       if (g && g !== 'none' && !gs.some((x) => x.id === g)) setActiveGroup('')
