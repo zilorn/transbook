@@ -1,6 +1,7 @@
-import { createSignal, For, onMount, Show } from 'solid-js'
+import { createEffect, createSignal, onMount, Show } from 'solid-js'
 import { api } from './api'
-import type { ApiKeyEntry, Config, UpdateStatus } from './types'
+import { config, loadConfig } from './state'
+import type { Config, UpdateStatus } from './types'
 
 // 表单编辑过程中数字字段可能是字符串（保存时再 Number 转换）
 type ConfigForm = Omit<Config, 'concurrency' | 'max_segment_chars'> & {
@@ -8,25 +9,40 @@ type ConfigForm = Omit<Config, 'concurrency' | 'max_segment_chars'> & {
   max_segment_chars: number | string
 }
 
-// 原 .modal label / .modal input 样式
-const LABEL = 'block mb-3 text-[13px] text-muted'
-const INPUT = 'w-full mt-1 px-2.5 py-[7px] border border-line rounded-[6px] text-[14px]'
+const INPUT = 'w-full px-3 py-2 border border-line rounded-[8px] text-[14px] bg-bg focus:border-primary focus:outline-none'
+const FIELD_LABEL = 'block text-[13px] font-medium text-text mb-1.5'
+const FIELD_HINT = 'text-[12px] text-muted mt-1'
 
-export default function Settings(props: { config: Config; onClose: (saved: boolean) => void }) {
-  const [form, setForm] = createSignal<ConfigForm>({ ...props.config, api_keys: props.config.api_keys || [] })
+function Card(props: { title: string; desc?: string; children: any }) {
+  return (
+    <section class="bg-card border border-line rounded-[12px] p-5 mb-4">
+      <h2 class="text-[15px] font-bold m-0">{props.title}</h2>
+      <Show when={props.desc}>
+        <p class="text-[12px] text-muted mt-1 mb-4">{props.desc}</p>
+      </Show>
+      <Show when={!props.desc}><div class="mt-4" /></Show>
+      {props.children}
+    </section>
+  )
+}
+
+export default function SettingsPage() {
+  // 页面独立加载配置；form 为空时等 config 就绪后初始化
+  onMount(() => { if (!config()) loadConfig() })
+  const [form, setForm] = createSignal<ConfigForm | null>(null)
+  createEffect(() => {
+    const c = config()
+    if (c && !form()) setForm({ ...c, api_keys: c.api_keys || [] })
+  })
+
   const [saving, setSaving] = createSignal(false)
+  const [saved, setSaved] = createSignal(false)
   const [error, setError] = createSignal('')
 
-  const set = <K extends keyof ConfigForm>(k: K, v: ConfigForm[K]) => setForm({ ...form(), [k]: v })
-
-  // ---- 多 API Key 编辑 ----
-  const setKey = <K extends keyof ApiKeyEntry>(i: number, k: K, v: ApiKeyEntry[K]) => {
-    const keys = form().api_keys.slice()
-    keys[i] = { ...keys[i], [k]: v }
-    set('api_keys', keys)
+  const set = <K extends keyof ConfigForm>(k: K, v: ConfigForm[K]) => {
+    setForm({ ...form()!, [k]: v })
+    setSaved(false)
   }
-  const addKey = () => set('api_keys', [...form().api_keys, { key: '', model: '', concurrency: 0 }])
-  const delKey = (i: number) => set('api_keys', form().api_keys.filter((_, n) => n !== i))
 
   // ---- 版本更新 ----
   const [upd, setUpd] = createSignal<UpdateStatus | null>(null)
@@ -67,16 +83,18 @@ export default function Settings(props: { config: Config; onClose: (saved: boole
   const save = async () => {
     setSaving(true)
     setError('')
+    setSaved(false)
     try {
       await api.saveConfig({
-        ...form(),
-        concurrency: Number(form().concurrency),
-        max_segment_chars: Number(form().max_segment_chars),
-        api_keys: form().api_keys
+        ...form()!,
+        concurrency: Number(form()!.concurrency),
+        max_segment_chars: Number(form()!.max_segment_chars),
+        api_keys: form()!.api_keys
           .filter(k => k.key.trim())
           .map(k => ({ ...k, key: k.key.trim(), concurrency: Number(k.concurrency) || 0 })),
       })
-      props.onClose(true)
+      await loadConfig()
+      setSaved(true)
     } catch (e: any) {
       setError(String(e.message || e))
     } finally {
@@ -84,124 +102,141 @@ export default function Settings(props: { config: Config; onClose: (saved: boole
     }
   }
 
+  const reset = () => {
+    const c = config()
+    if (c) setForm({ ...c, api_keys: c.api_keys || [] })
+    setError('')
+    setSaved(false)
+  }
+
   return (
-    <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-10"
-      onClick={(e) => e.target === e.currentTarget && props.onClose(false)}>
-      <div class="bg-card rounded-[10px] p-[22px] w-[560px] max-w-[92vw] max-h-[88vh] overflow-y-auto">
-        <h2 class="mb-3.5 text-[18px] font-bold">设置</h2>
-        <div class="mb-1 flex items-center justify-between">
-          <span class="text-[13px] text-muted">API Keys（可多个，请求自动分摊）</span>
-          <button class="small" onClick={addKey}>+ 添加 Key</button>
-        </div>
-        <For each={form().api_keys}>
-          {(k, i) => (
-            <div class="border border-line rounded-[6px] p-2.5 mb-2">
-              <div class="flex gap-2 items-center">
-                <input class="flex-1 px-2.5 py-[7px] border border-line rounded-[6px] text-[14px]"
-                  type="password" value={k.key} placeholder="sk-..."
-                  onInput={(e) => setKey(i(), 'key', e.currentTarget.value)} />
-                <button class="danger small shrink-0" onClick={() => delKey(i())}>删</button>
+    <Show when={form()} fallback={<p class="text-muted text-[14px] py-10 text-center">加载中…</p>}>
+      {(f) => (
+        <div class="max-w-[720px] mx-auto py-5">
+          <div class="mb-5">
+            <h1 class="text-[22px] font-bold m-0">设置</h1>
+            <p class="text-[13px] text-muted mt-1 mb-0">翻译参数、WebDAV 与版本更新；API Keys 在「翻译队列」页配置</p>
+          </div>
+
+          {/* ---- 翻译参数 ---- */}
+          <Card title="翻译参数">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4">
+              <div class="sm:col-span-2">
+                <span class={FIELD_LABEL}>API 地址</span>
+                <input class={INPUT} value={f().base_url || ''}
+                  onInput={(e) => set('base_url', e.currentTarget.value)} />
               </div>
-              <div class="flex gap-2 mt-2">
-                <input class="flex-1 px-2.5 py-[7px] border border-line rounded-[6px] text-[13px]"
-                  value={k.model} placeholder={`统一模型：${form().model || 'deepseek-chat'}`}
-                  onInput={(e) => setKey(i(), 'model', e.currentTarget.value)} />
-                <input class="w-[130px] px-2.5 py-[7px] border border-line rounded-[6px] text-[13px]"
-                  type="number" min="0" max="50" value={k.concurrency || ''}
-                  placeholder={`统一并发：${form().concurrency}`}
-                  title="并发数，留空或 0 表示跟随统一并发数"
-                  onInput={(e) => setKey(i(), 'concurrency', e.currentTarget.valueAsNumber || 0)} />
+              <div>
+                <span class={FIELD_LABEL}>统一模型</span>
+                <input class={INPUT} value={f().model || ''}
+                  onInput={(e) => set('model', e.currentTarget.value)} />
+                <p class={FIELD_HINT}>各 Key 可单独覆盖</p>
+              </div>
+              <div>
+                <span class={FIELD_LABEL}>目标语言</span>
+                <input class={INPUT} value={f().target_lang || ''}
+                  onInput={(e) => set('target_lang', e.currentTarget.value)} />
+              </div>
+              <div>
+                <span class={FIELD_LABEL}>统一并发数：{f().concurrency}</span>
+                <input class="w-full accent-primary mt-2" type="range" min="1" max="20" step="1"
+                  value={f().concurrency}
+                  onInput={(e) => set('concurrency', e.currentTarget.value)} />
+                <p class={FIELD_HINT}>各 Key 可单独覆盖</p>
+              </div>
+              <div>
+                <span class={FIELD_LABEL}>单段最大字符数</span>
+                <input class={INPUT} type="number" min="500" max="20000" value={f().max_segment_chars}
+                  onInput={(e) => set('max_segment_chars', e.currentTarget.value)} />
+                <p class={FIELD_HINT}>越大分段越少</p>
               </div>
             </div>
-          )}
-        </For>
-        <Show when={form().api_keys.length === 0}>
-          <p class="text-muted text-[12px] mt-0 mb-2">尚未添加 API Key，翻译前请先添加。</p>
-        </Show>
-        <label class={LABEL}>API 地址
-          <input class={INPUT} value={form().base_url || ''}
-            onInput={(e) => set('base_url', e.currentTarget.value)} />
-        </label>
-        <label class={LABEL}>统一模型（各 Key 可单独覆盖）
-          <input class={INPUT} value={form().model || ''}
-            onInput={(e) => set('model', e.currentTarget.value)} />
-        </label>
-        <label class={LABEL}>目标语言
-          <input class={INPUT} value={form().target_lang || ''}
-            onInput={(e) => set('target_lang', e.currentTarget.value)} />
-        </label>
-        <label class={LABEL}>统一并发数：{form().concurrency}（各 Key 可单独覆盖）
-          <input class={INPUT} type="range" min="1" max="20" step="1" value={form().concurrency}
-            onInput={(e) => set('concurrency', e.currentTarget.value)} />
-        </label>
-        <label class={LABEL}>单段最大字符数（越大分段越少）
-          <input class={INPUT} type="number" min="500" max="20000" value={form().max_segment_chars}
-            onInput={(e) => set('max_segment_chars', e.currentTarget.value)} />
-        </label>
-        <label class="flex items-center gap-2 mb-3 text-[13px] text-muted cursor-pointer">
-          <input type="checkbox" checked={form().webdav_enabled || false}
-            onChange={(e) => set('webdav_enabled', e.currentTarget.checked)} />
-          开启 WebDAV 书库（只读，供阅读软件访问）
-        </label>
-        {form().webdav_enabled && (
-          <p class="mb-3 text-[12px] text-muted break-all">
-            在阅读软件中添加 WebDAV 书库，地址：
-            <code class="select-all">http://{location.hostname}:8300/webdav/</code>
-            <br />已翻译的书籍会以 EPUB 形式出现在书库根目录。
-            从手机等其他设备访问时，把主机名换成本机的局域网 IP。
-          </p>
-        )}
-        <div class="border-t border-line pt-3 mt-1 mb-3">
-          <div class="mb-2 flex items-center justify-between">
-            <span class="text-[13px] text-muted">版本更新（GitHub）</span>
-            <button class="small" disabled={updBusy()} onClick={checkUpdate}>
-              {updBusy() && upd()?.status === 'checking' ? '检查中…' : '检查更新'}
+          </Card>
+
+          {/* ---- WebDAV ---- */}
+          <Card title="WebDAV 书库" desc="以只读 WebDAV 暴露已翻译书籍（EPUB），供阅读软件直接添加为书库。">
+            <label class="flex items-center gap-2 text-[14px] cursor-pointer">
+              <input type="checkbox" class="w-[16px] h-[16px] accent-primary"
+                checked={f().webdav_enabled || false}
+                onChange={(e) => set('webdav_enabled', e.currentTarget.checked)} />
+              开启 WebDAV 书库
+            </label>
+            <Show when={f().webdav_enabled}>
+              <p class="mt-3 mb-0 text-[12px] text-muted break-all">
+                在阅读软件中添加 WebDAV 书库，地址：
+                <code class="select-all">http://{location.hostname}:8300/webdav/</code>
+                <br />已翻译的书籍会以 EPUB 形式出现在书库根目录。
+                从手机等其他设备访问时，把主机名换成本机的局域网 IP。
+              </p>
+            </Show>
+          </Card>
+
+          {/* ---- 版本更新 ---- */}
+          <Card title="版本更新（GitHub）">
+            <div class="mb-4">
+              <span class={FIELD_LABEL}>更新仓库（owner/repo，留空默认官方仓库）</span>
+              <input class={INPUT} value={f().update_repo || ''} placeholder="zilorn/transbook"
+                onInput={(e) => set('update_repo', e.currentTarget.value)} />
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-4 mb-4">
+              <div>
+                <span class={FIELD_LABEL}>分支</span>
+                <input class={INPUT} value={f().update_branch || ''} placeholder="main"
+                  onInput={(e) => set('update_branch', e.currentTarget.value)} />
+              </div>
+              <div class="sm:col-span-2">
+                <span class={FIELD_LABEL}>GitHub Token（私有仓库用，可留空）</span>
+                <input class={INPUT} type="password" value={f().github_token || ''}
+                  onInput={(e) => set('github_token', e.currentTarget.value)} />
+              </div>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap">
+              <button class="small" disabled={updBusy()} onClick={checkUpdate}>
+                {updBusy() && upd()?.status === 'checking' ? '检查中…' : '检查更新'}
+              </button>
+              <Show when={upd()}>
+                <p class="text-[12px] text-muted m-0 break-all">
+                  当前 <code>{shortSha(upd()!.current_sha)}</code>
+                  <Show when={upd()!.remote_sha}>
+                    {' '}→ 最新 <code>{shortSha(upd()!.remote_sha)}</code>（{upd()!.remote_msg}）
+                  </Show>
+                  {'　'}上次检查：{fmtTime(upd()!.last_check)}
+                </p>
+              </Show>
+            </div>
+            <Show when={upd()}>
+              <Show when={upd()!.status === 'updating'}>
+                <p class="text-[12px] text-muted mt-2 mb-0">正在更新：下载源码并构建前端，完成后服务自动重启…</p>
+              </Show>
+              <Show when={upd()!.status === 'restarting'}>
+                <p class="text-[12px] text-muted mt-2 mb-0">正在重启服务…</p>
+              </Show>
+              <Show when={upd()!.status === 'restart_required'}>
+                <p class="text-[12px] text-muted mt-2 mb-0">更新已应用，非 Docker 环境需手动重启服务生效。</p>
+              </Show>
+              <Show when={upd()!.update_available && !['updating', 'restarting'].includes(upd()!.status)}>
+                <button class="primary small mt-3" disabled={updBusy()} onClick={applyUpdate}>
+                  {updBusy() ? '更新中…' : '立即更新'}
+                </button>
+              </Show>
+            </Show>
+          </Card>
+
+          {/* ---- 底部保存栏 ---- */}
+          <div class="sticky bottom-0 -mx-4 md:mx-0 px-4 md:px-0 py-3 bg-bg/90 backdrop-blur flex items-center justify-end gap-3 border-t border-line md:border-0">
+            <Show when={error()}>
+              <span class="text-danger text-[13px] mr-auto">{error()}</span>
+            </Show>
+            <Show when={saved() && !error()}>
+              <span class="text-[13px] text-[#166534] mr-auto">✓ 已保存</span>
+            </Show>
+            <button onClick={reset}>放弃修改</button>
+            <button class="primary" disabled={saving()} onClick={save}>
+              {saving() ? '保存中…' : '保存设置'}
             </button>
           </div>
-          <label class={LABEL}>更新仓库（owner/repo，留空默认官方仓库）
-            <input class={INPUT} value={form().update_repo || ''} placeholder="zilorn/transbook"
-              onInput={(e) => set('update_repo', e.currentTarget.value)} />
-          </label>
-          <div class="flex gap-2">
-            <label class={`${LABEL} flex-1`}>分支
-              <input class={INPUT} value={form().update_branch || ''} placeholder="main"
-                onInput={(e) => set('update_branch', e.currentTarget.value)} />
-            </label>
-            <label class={`${LABEL} flex-[2]`}>GitHub Token（私有仓库用，可留空）
-              <input class={INPUT} type="password" value={form().github_token || ''}
-                onInput={(e) => set('github_token', e.currentTarget.value)} />
-            </label>
-          </div>
-          <Show when={upd()}>
-            <p class="text-[12px] text-muted mb-2 break-all">
-              当前版本 <code>{shortSha(upd()!.current_sha)}</code>
-              <Show when={upd()!.remote_sha}>
-                {' '}→ 最新 <code>{shortSha(upd()!.remote_sha)}</code>（{upd()!.remote_msg}）
-              </Show>
-              <br />上次检查：{fmtTime(upd()!.last_check)}（冷却 {upd()!.cooldown_min} 分钟内不重复请求）
-              <Show when={upd()!.status === 'updating'}>
-                <br />正在更新：下载源码并构建前端，完成后服务自动重启…
-              </Show>
-              <Show when={upd()!.status === 'restarting'}><br />正在重启服务…</Show>
-              <Show when={upd()!.status === 'restart_required'}>
-                <br />更新已应用，非 Docker 环境需手动重启服务生效。
-              </Show>
-            </p>
-            <Show when={upd()!.update_available && !['updating', 'restarting'].includes(upd()!.status)}>
-              <button class="primary small mb-2" disabled={updBusy()} onClick={applyUpdate}>
-                {updBusy() ? '更新中…' : '立即更新'}
-              </button>
-            </Show>
-          </Show>
         </div>
-        {error() && <p class="text-danger text-[13px]">{error()}</p>}
-        <div class="flex justify-end gap-2.5 mt-2">
-          <button onClick={() => props.onClose(false)}>取消</button>
-          <button class="primary" disabled={saving()} onClick={save}>
-            {saving() ? '保存中…' : '保存'}
-          </button>
-        </div>
-      </div>
-    </div>
+      )}
+    </Show>
   )
 }

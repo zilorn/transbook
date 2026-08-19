@@ -1,8 +1,10 @@
-import { createSignal, For, onCleanup, onMount, Show } from 'solid-js'
+import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
 import { useNavigate } from '@solidjs/router'
 import { api } from './api'
-import { config, setSettingsOpen } from './state'
-import type { QueueStatus, QueueStatusEntry } from './types'
+import { config, loadConfig } from './state'
+import type { ApiKeyEntry, QueueStatus, QueueStatusEntry } from './types'
+
+const KEY_INPUT = 'px-2.5 py-[7px] border border-line rounded-[6px] text-[13px] bg-bg focus:border-primary focus:outline-none'
 
 // 章节小方块状态色：灰=未开始 蓝=翻译中 绿=已完成 红=失败
 const TILE: Record<string, string> = {
@@ -31,6 +33,43 @@ export default function TranslatePage() {
   const [expanded, setExpanded] = createSignal<Record<string, boolean>>({})
   const [busy, setBusy] = createSignal(false)
   const [error, setError] = createSignal('')
+
+  // ---- API Keys 编辑 ----
+  const [keys, setKeys] = createSignal<ApiKeyEntry[] | null>(null)
+  const [keysSaving, setKeysSaving] = createSignal(false)
+  const [keysMsg, setKeysMsg] = createSignal('')
+  createEffect(() => {
+    const c = config()
+    if (c && !keys()) setKeys((c.api_keys || []).map(k => ({ ...k })))
+  })
+  const setKey = <K extends keyof ApiKeyEntry>(i: number, k: K, v: ApiKeyEntry[K]) => {
+    const ks = keys()!.slice()
+    ks[i] = { ...ks[i], [k]: v }
+    setKeys(ks)
+    setKeysMsg('')
+  }
+  const addKey = () => { setKeys([...keys()!, { key: '', model: '', concurrency: 0 }]); setKeysMsg('') }
+  const delKey = (i: number) => { setKeys(keys()!.filter((_, n) => n !== i)); setKeysMsg('') }
+  const saveKeys = async () => {
+    const c = config()
+    if (!c || !keys()) return
+    setKeysSaving(true)
+    setKeysMsg('')
+    try {
+      await api.saveConfig({
+        ...c,
+        api_keys: keys()!
+          .filter(k => k.key.trim())
+          .map(k => ({ ...k, key: k.key.trim(), concurrency: Number(k.concurrency) || 0 })),
+      })
+      await loadConfig()
+      setKeysMsg('✓ 已保存')
+    } catch (e: any) {
+      setKeysMsg(String(e.message || e))
+    } finally {
+      setKeysSaving(false)
+    }
+  }
 
   const refresh = async () => {
     try {
@@ -80,39 +119,62 @@ export default function TranslatePage() {
 
   return (
     <div>
-      {/* API 配置概览 */}
+      {/* API Keys 配置 */}
       <div class="bg-card border border-line rounded-[10px] p-4 mb-4">
-        <div class="flex items-center justify-between mb-2">
-          <h2 class="text-[16px] font-bold m-0">API 配置</h2>
-          <button class="small" onClick={() => setSettingsOpen(true)}>修改设置</button>
+        <div class="flex items-center justify-between mb-1">
+          <h2 class="text-[16px] font-bold m-0">API Keys</h2>
+          <div class="flex gap-2">
+            <button class="small" onClick={addKey}>+ 添加 Key</button>
+            <button class="small" onClick={() => navigate('/settings')}>更多设置</button>
+          </div>
         </div>
-        <Show when={config()} fallback={<p class="text-muted text-[13px]">加载中…</p>}>
-          {(cfg) => (
-            <div>
-              <Show when={cfg().api_keys.length > 0}
-                fallback={<p class="text-danger text-[13px] my-1">尚未配置 API Key，请先在设置中添加。</p>}>
-                <table class="mb-2">
-                  <thead>
-                    <tr><th>API Key</th><th>模型</th><th>并发数</th></tr>
-                  </thead>
-                  <tbody>
-                    <For each={cfg().api_keys}>
-                      {(k) => (
-                        <tr>
-                          <td class="font-mono text-[13px]">{k.key}</td>
-                          <td>{k.model || <span class="text-muted">统一：{cfg().model}</span>}</td>
-                          <td>{k.concurrency || <span class="text-muted">统一：{cfg().concurrency}</span>}</td>
-                        </tr>
-                      )}
-                    </For>
-                  </tbody>
-                </table>
+        <p class="text-muted text-[12px] mt-0 mb-3">可配置多个 Key，翻译请求按各 Key 并发数自动分摊。</p>
+        <Show when={keys()} fallback={<p class="text-muted text-[13px]">加载中…</p>}>
+          {(ks) => (
+            <>
+              <For each={ks()}>
+                {(k, i) => (
+                  <div class="border border-line rounded-[8px] p-2.5 mb-2 bg-bg">
+                    <div class="flex gap-2 items-center">
+                      <span class="text-[12px] text-muted w-[36px] shrink-0">Key {i() + 1}</span>
+                      <input class={`${KEY_INPUT} flex-1 font-mono`}
+                        type="password" value={k.key} placeholder="sk-..."
+                        onInput={(e) => setKey(i(), 'key', e.currentTarget.value)} />
+                      <button class="danger small shrink-0" title="删除该 Key" onClick={() => delKey(i())}>删</button>
+                    </div>
+                    <div class="flex gap-2 mt-2 ml-[44px]">
+                      <input class={`${KEY_INPUT} flex-1`}
+                        value={k.model} placeholder={`统一模型：${config()?.model || 'deepseek-chat'}`}
+                        onInput={(e) => setKey(i(), 'model', e.currentTarget.value)} />
+                      <input class={`${KEY_INPUT} w-[130px] shrink-0`}
+                        type="number" min="0" max="50" value={k.concurrency || ''}
+                        placeholder={`统一并发：${config()?.concurrency ?? ''}`}
+                        title="并发数，留空或 0 表示跟随统一并发数"
+                        onInput={(e) => setKey(i(), 'concurrency', e.currentTarget.valueAsNumber || 0)} />
+                    </div>
+                  </div>
+                )}
+              </For>
+              <Show when={ks().length === 0}>
+                <p class="text-danger text-[13px] mt-0 mb-2">尚未添加 API Key，翻译前请先添加。</p>
               </Show>
-              <p class="text-muted text-[13px] m-0">
-                总并发 {totalConcurrency()} · 目标语言 {cfg().target_lang} ·
-                单段最大 {cfg().max_segment_chars} 字符
-              </p>
-            </div>
+              <div class="flex items-center gap-3">
+                <button class="primary small" disabled={keysSaving()} onClick={saveKeys}>
+                  {keysSaving() ? '保存中…' : '保存'}
+                </button>
+                <Show when={keysMsg()}>
+                  <span class={`text-[13px] ${keysMsg().startsWith('✓') ? 'text-[#166534]' : 'text-danger'}`}>{keysMsg()}</span>
+                </Show>
+              </div>
+            </>
+          )}
+        </Show>
+        <Show when={config()}>
+          {(cfg) => (
+            <p class="text-muted text-[13px] mt-3 mb-0">
+              总并发 {totalConcurrency()} · 目标语言 {cfg().target_lang} ·
+              单段最大 {cfg().max_segment_chars} 字符
+            </p>
           )}
         </Show>
       </div>

@@ -1,7 +1,6 @@
 import { A, HashRouter, Route, useLocation } from '@solidjs/router'
 import { createSignal, lazy, onMount, Show, type ParentProps } from 'solid-js'
-import { config, loadConfig, setSettingsOpen, settingsOpen } from './state'
-import Settings from './Settings'
+import { config, loadConfig } from './state'
 import UpdatePrompt from './UpdatePrompt'
 
 const BookList = lazy(() => import('./BookList'))
@@ -11,6 +10,7 @@ const BookSearchPage = lazy(() => import('./BookSearchPage'))
 const TranslatePage = lazy(() => import('./TranslatePage'))
 const SearchPage = lazy(() => import('./SearchPage'))
 const DiscoverPage = lazy(() => import('./DiscoverPage'))
+const SettingsPage = lazy(() => import('./Settings'))
 
 const NAV = 'flex items-center gap-2 px-3 py-2 rounded-[6px] text-[14px] no-underline'
 const NAV_ACTIVE = 'bg-[#dbeafe] text-[#1d4ed8] font-medium'
@@ -106,7 +106,7 @@ function Layout(props: ParentProps) {
                 {config()!.api_key_set ? `API 已配置（${config()!.api_keys.length} 个 Key）` : '未配置 API Key'}
               </span>
             </Show>
-            <button class="w-full flex items-center justify-center gap-2" onClick={() => setSettingsOpen(true)}><IconSettings />设置</button>
+            <A href="/settings" class={`${NAV} ${NAV_IDLE} w-full`} activeClass={NAV_ACTIVE}><IconSettings />设置</A>
           </div>
         </aside>
         {/* 移动端导航抽屉 */}
@@ -119,10 +119,10 @@ function Layout(props: ParentProps) {
                 <NavLinks onNavigate={() => setMenuOpen(false)} />
               </nav>
               <div class="p-3 border-t border-line">
-                <button class="w-full flex items-center justify-center gap-2"
-                  onClick={() => { setMenuOpen(false); setSettingsOpen(true) }}>
+                <A href="/settings" class={`${NAV} ${NAV_IDLE} w-full`} activeClass={NAV_ACTIVE}
+                  onClick={() => setMenuOpen(false)}>
                   <IconSettings />设置
-                </button>
+                </A>
               </div>
             </div>
           </div>
@@ -142,12 +142,6 @@ function Layout(props: ParentProps) {
             {props.children}
           </main>
         </div>
-        <Show when={settingsOpen() && config()}>
-          <Settings config={config()!} onClose={(saved) => {
-            setSettingsOpen(false)
-            if (saved) loadConfig()
-          }} />
-        </Show>
       </div>
     </Show>
     </>
@@ -165,6 +159,7 @@ export default function App() {
       <Route path="/queue" component={TranslatePage} />
       <Route path="/search" component={SearchPage} />
       <Route path="/discover" component={DiscoverPage} />
+      <Route path="/settings" component={SettingsPage} />
     </HashRouter>
   )
 }
