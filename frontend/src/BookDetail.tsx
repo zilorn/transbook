@@ -228,6 +228,37 @@ export default function BookDetail() {
 
   const doneCount = () => (book()?.chapters || []).filter(c => c.status === 'done').length
 
+  // ---- 排队翻译弹窗：选翻译类型（常规/重翻）+ 章节范围（1 起，与目录 # 列一致）----
+  const [queueOpen, setQueueOpen] = createSignal(false)
+  const [qOverwrite, setQOverwrite] = createSignal(false)
+  const [qFrom, setQFrom] = createSignal('1')
+  const [qTo, setQTo] = createSignal('1')
+  const openQueueDialog = () => {
+    setQOverwrite(false)
+    setQFrom('1')
+    setQTo(String(book()?.chapters.length || 1))
+    setQueueOpen(true)
+  }
+  const confirmQueue = () => {
+    const chs = book()?.chapters || []
+    const n = chs.length
+    if (!n) return
+    let from = parseInt(qFrom(), 10)
+    let to = parseInt(qTo(), 10)
+    if (isNaN(from)) from = 1
+    if (isNaN(to)) to = n
+    from = Math.min(Math.max(from, 1), n)
+    to = Math.min(Math.max(to, 1), n)
+    if (from > to) [from, to] = [to, from]
+    const ids = chs.slice(from - 1, to).map(c => c.id)
+    const re = qOverwrite()
+    // 全本范围时不传 chapter_ids，保持与整书入队一致
+    const ranged = from !== 1 || to !== n
+    act(() => api.enqueue(bookId, re, ranged ? ids : undefined),
+      re ? '已加入翻译队列（重翻所选章节）' : '已加入翻译队列')
+      .then(() => setQueueOpen(false))
+  }
+
   // ---- 书签（阅读器选中文本添加）----
   // 展示按章节顺序排序（章节序 → 句号；章节已删除的排最后），内部数据仍按添加顺序存
   const bookmarks = (): Bookmark[] => {
@@ -355,12 +386,9 @@ export default function BookDetail() {
               <div class="flex items-center flex-wrap gap-y-2">
                 <div class="flex">
                   <button class="primary rounded-r-none" disabled={busy() || b().running}
-                    onClick={() => act(() => api.enqueue(b().id, false), '已加入翻译队列')}>
+                    title="选择翻译类型与章节范围后加入翻译队列"
+                    onClick={openQueueDialog}>
                     {doneCount() > 0 ? '排队翻译（继续未完成）' : '排队翻译'}
-                  </button>
-                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
-                    onClick={() => act(() => api.enqueue(b().id, true), '已加入翻译队列（全部重译）')}>
-                    排队全部重译
                   </button>
                   <button class="rounded-none -ml-px" disabled={busy() || b().running}
                     onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
@@ -611,6 +639,46 @@ export default function BookDetail() {
                 onClick={onAddText}>
                 添加为章节
               </button>
+            </div>
+          </Show>
+
+          <Show when={queueOpen()}>
+            <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-10"
+              onClick={() => setQueueOpen(false)}>
+              <div class="bg-card rounded-[10px] p-[22px] max-w-[92vw] w-[440px]"
+                onClick={(e) => e.stopPropagation()}>
+                <h2 class="mb-3.5 text-[18px] font-bold">排队翻译</h2>
+                <div class="flex flex-col gap-2 mb-4">
+                  <label class="flex items-center gap-2 cursor-pointer text-[14px]">
+                    <input type="radio" name="qmode" checked={!qOverwrite()}
+                      onChange={() => setQOverwrite(false)} />
+                    常规翻译（范围内已翻译的章节跳过，只翻译未翻译的）
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer text-[14px]">
+                    <input type="radio" name="qmode" checked={qOverwrite()}
+                      onChange={() => setQOverwrite(true)} />
+                    重翻（范围内章节全部重新翻译，不管是否已翻译）
+                  </label>
+                </div>
+                <div class="flex items-center gap-2 mb-4 text-[14px]">
+                  <span>从第</span>
+                  <input type="number" min="1" max={b().chapters.length}
+                    class="w-[76px] px-2.5 py-[7px] border border-line rounded-[6px] text-[14px]"
+                    value={qFrom()} onInput={(e) => setQFrom(e.currentTarget.value)} />
+                  <span>章到第</span>
+                  <input type="number" min="1" max={b().chapters.length}
+                    class="w-[76px] px-2.5 py-[7px] border border-line rounded-[6px] text-[14px]"
+                    value={qTo()} onInput={(e) => setQTo(e.currentTarget.value)} />
+                  <span>章（共 {b().chapters.length} 章）</span>
+                </div>
+                <div class="flex justify-end gap-2.5">
+                  <button onClick={() => setQueueOpen(false)}>取消</button>
+                  <button class="primary" disabled={busy() || b().chapters.length === 0}
+                    onClick={confirmQueue}>
+                    加入队列
+                  </button>
+                </div>
+              </div>
             </div>
           </Show>
 

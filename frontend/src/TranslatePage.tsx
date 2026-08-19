@@ -64,8 +64,12 @@ export default function TranslatePage() {
   const isOpen = (e: QueueStatusEntry) => expanded()[e.book_id] ?? e.running
   const toggle = (id: string, cur: boolean) => setExpanded({ ...expanded(), [id]: !cur })
 
-  const doneOf = (e: QueueStatusEntry) => e.chapters.filter(c => c.status === 'done').length
-  const runningOf = (e: QueueStatusEntry) => e.chapters.filter(c => c.status === 'translating').length
+  // 队列条目可能只含部分章节（按范围入队），过滤后展示并保留原章节序号
+  const chaptersOf = (e: QueueStatusEntry) =>
+    e.chapters.map((c, i) => ({ c, n: i + 1 }))
+      .filter(({ c }) => !e.chapter_ids || e.chapter_ids.includes(c.id))
+  const doneOf = (e: QueueStatusEntry) => chaptersOf(e).filter(({ c }) => c.status === 'done').length
+  const runningOf = (e: QueueStatusEntry) => chaptersOf(e).filter(({ c }) => c.status === 'translating').length
 
   // 各 key 的有效并发数之和 = 当前总并发能力
   const totalConcurrency = () => {
@@ -166,9 +170,9 @@ export default function TranslatePage() {
                 <div class="flex items-center gap-2 mt-1.5">
                   <div class="flex-1 h-2 bg-[#e5e7eb] rounded-[3px] overflow-hidden">
                     <div class="h-full bg-primary transition-[width] duration-[0.4s]"
-                      style={{ width: `${e.chapters.length ? (doneOf(e) / e.chapters.length) * 100 : 0}%` }} />
+                      style={{ width: `${chaptersOf(e).length ? (doneOf(e) / chaptersOf(e).length) * 100 : 0}%` }} />
                   </div>
-                  <span class="text-muted text-[12px] shrink-0">{doneOf(e)}/{e.chapters.length} 章</span>
+                  <span class="text-muted text-[12px] shrink-0">{doneOf(e)}/{chaptersOf(e).length} 章</span>
                 </div>
               </div>
               <button class="small shrink-0"
@@ -184,8 +188,8 @@ export default function TranslatePage() {
             {/* 章节小方块 */}
             <Show when={isOpen(e)}>
               <div class="px-3.5 pb-3.5 pt-1 border-t border-line flex flex-wrap gap-2">
-                <For each={e.chapters}>
-                  {(c, i) => {
+                <For each={chaptersOf(e)}>
+                  {({ c, n }) => {
                     const segPct = () => {
                       if (c.status === 'done') return 100
                       if (c.seg_total) return Math.round(((c.seg_done || 0) / c.seg_total) * 100)
@@ -195,7 +199,7 @@ export default function TranslatePage() {
                       <div class="w-[64px]"
                         title={`${c.title}\n${CH_STATUS[c.status] || c.status}${c.error ? `\n${c.error}` : ''}`}>
                         <div class={`w-[64px] h-[48px] rounded-[6px] flex items-center justify-center text-[13px] font-medium transition-colors duration-300 ${TILE[c.status] || TILE.pending}`}>
-                          {i() + 1}
+                          {n}
                         </div>
                         {/* 分段翻译进度 */}
                         <div class="h-[4px] bg-[#e5e7eb] rounded-[2px] overflow-hidden mt-1">

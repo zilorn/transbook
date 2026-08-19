@@ -151,6 +151,7 @@ export interface TranslateOptions {
 export interface QueueStatusEntry {
   book_id: string
   overwrite: boolean
+  chapter_ids: string[] | null
   title: string
   title_translated: string | null
   status: BookStatus

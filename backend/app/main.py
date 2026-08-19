@@ -850,6 +850,7 @@ def queue_status():
         entries.append({
             "book_id": e["book_id"],
             "overwrite": bool(e.get("overwrite")),
+            "chapter_ids": e.get("chapter_ids"),
             "title": book.get("title") or "",
             "title_translated": book.get("title_translated"),
             "status": book.get("status"),

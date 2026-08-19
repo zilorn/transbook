@@ -97,11 +97,11 @@ export const api = {
     req(`/api/books/${id}/stop`, { method: 'POST' }),
   queue: (): Promise<{ running: boolean; entries: { book_id: string; overwrite: boolean }[] }> =>
     req('/api/queue'),
-  enqueue: (id: string, overwrite = false): Promise<{ ok: boolean }> =>
+  enqueue: (id: string, overwrite = false, chapterIds?: string[]): Promise<{ ok: boolean }> =>
     req('/api/queue', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ book_id: id, overwrite }),
+      body: JSON.stringify({ book_id: id, overwrite, chapter_ids: chapterIds ?? null }),
     }),
   dequeue: (id: string): Promise<{ ok: boolean }> =>
     req(`/api/queue/${id}`, { method: 'DELETE' }),
