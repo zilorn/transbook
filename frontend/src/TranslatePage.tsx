@@ -138,17 +138,17 @@ export default function TranslatePage() {
                   <div class="border border-line rounded-[8px] p-2.5 mb-2 bg-bg">
                     <div class="flex gap-2 items-center">
                       <span class="text-[12px] text-muted w-[36px] shrink-0">Key {i() + 1}</span>
-                      <input class={`${KEY_INPUT} flex-1 font-mono`}
+                      <input class={`${KEY_INPUT} flex-1 min-w-0 font-mono`}
                         type="password" value={k.key} placeholder="sk-..."
                         onInput={(e) => setKey(i(), 'key', e.currentTarget.value)} />
                       <button class="danger small shrink-0 p-[6px] inline-flex items-center justify-center"
                         title="删除该 Key" onClick={() => delKey(i())}><IconTrash /></button>
                     </div>
-                    <div class="flex gap-2 mt-2 ml-[44px]">
-                      <input class={`${KEY_INPUT} flex-1`}
+                    <div class="flex gap-2 mt-2 ml-0 sm:ml-[44px]">
+                      <input class={`${KEY_INPUT} flex-1 min-w-0`}
                         value={k.model} placeholder={`统一模型：${config()?.model || 'deepseek-chat'}`}
                         onInput={(e) => setKey(i(), 'model', e.currentTarget.value)} />
-                      <input class={`${KEY_INPUT} w-[130px] shrink-0`}
+                      <input class={`${KEY_INPUT} w-[104px] sm:w-[130px] shrink-0`}
                         type="number" min="0" max="50" value={k.concurrency || ''}
                         placeholder={`统一并发：${config()?.concurrency ?? ''}`}
                         title="并发数，留空或 0 表示跟随统一并发数"
