@@ -141,6 +141,15 @@
     text-underline-offset: 4px;
   }
 
+  /* 设置页：锚点/搜索定位目标设置项时的闪烁高亮（约 1.7s 后消退） */
+  .setting-flash {
+    animation: setting-flash-fade 1.7s ease-out;
+  }
+  @keyframes setting-flash-fade {
+    0%, 55% { box-shadow: 0 0 0 2px #2563eb; background: #eff6ff; }
+    100% { box-shadow: 0 0 0 2px rgba(37, 99, 235, 0); background: transparent; }
+  }
+
   /* 阅读器工具栏/目录内的按钮跟随阅读主题色，不用默认白底 */
   .reader-bar button {
     background: transparent;
