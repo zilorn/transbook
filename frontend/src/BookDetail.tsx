@@ -359,7 +359,7 @@ export default function BookDetail() {
                 <span class={BADGE}>状态：{b().status}{b().running ? '（运行中）' : ''}</span>
               </Show>
               <Show when={b().no_translate}>
-                <span class={`${BADGE_BASE} bg-[#fef3c7] text-[#92400e]`}>无需翻译（仅托管）</span>
+                <span class={`${BADGE_BASE} bg-[#fef3c7] text-[#92400e]`}>无需翻译</span>
               </Show>
               <Show when={b().source}>
                 <a class={`${BADGE} no-underline hover:text-primary`}
@@ -422,27 +422,27 @@ export default function BookDetail() {
               {/* 翻译操作：方框按钮紧贴成组，单独一行 */}
               <div class="flex items-center flex-wrap gap-y-2">
                 <div class="flex">
-                  <button class="primary rounded-r-none" disabled={busy() || b().running}
+                  <button class="border rounded-l-2xl rounded-r-none font-light pl-0.5 pr-0.5" disabled={busy() || b().running}
                     title="选择翻译类型与章节范围后加入翻译队列"
                     onClick={openQueueDialog}>
                     排队翻译
                   </button>
-                  <button class="rounded-none -ml-px" disabled={busy() || b().running}
+                  <button class="border rounded-none font-light pl-0.5 pr-0.5" disabled={busy() || b().running}
                     onClick={() => act(() => api.generateGlossary(b().id), '正在生成术语表…')}>
                     生成术语表
                   </button>
-                  <button class="rounded-l-none -ml-px" disabled={busy() || b().running}
+                  <button class="border rounded-r-2xl rounded-l-none font-light pl-0.5 pr-0.5" disabled={busy() || b().running}
                     onClick={() => act(() => api.retranslateToc(b().id), '正在重翻目录…')}>
                     重翻目录
                   </button>
                 </div>
               </div>
             </Show>
-            {/* 导出：方框按钮紧贴成组，单独一行 */}
+            {/* 导出：与「排队翻译」同款方框按钮紧贴成组，单独一行 */}
             <div class="flex">
-              <a class="inline-block px-[14px] py-[7px] border border-line rounded-l-[6px] bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
+              <a class="inline-block py-[7px] border border-line rounded-l-2xl rounded-r-none font-light pl-0.5 pr-0.5 bg-card text-text text-[14px] no-underline cursor-pointer hover:border-primary hover:text-primary"
                 href={api.exportUrl(b().id, 'txt')} download="">导出 TXT</a>
-              <a class="inline-block px-[14px] py-[7px] border border-line rounded-r-[6px] -ml-px bg-card text-text text-[14px] no-underline hover:border-primary hover:text-primary"
+              <a class="inline-block py-[7px] border border-line rounded-r-2xl rounded-l-none font-light pl-0.5 pr-0.5 bg-card text-text text-[14px] no-underline cursor-pointer hover:border-primary hover:text-primary"
                 href={api.exportUrl(b().id, 'epub')} download="">导出 EPUB</a>
             </div>
           </div>
