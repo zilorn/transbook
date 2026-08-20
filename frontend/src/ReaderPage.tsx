@@ -567,15 +567,22 @@ export default function ReaderPage() {
   }
 
   // 书签跳转：跨页（书籍详情）经 sessionStorage 传入，页内直接滚动
-  let pendingJump: { cid: string; si: number } | null = null
+  let pendingJump: { cid: string; si: number; bmId?: string } | null = null
+  // 跳转 effect 已为哪一章调度定位滚动：loadChapter 结束时据此跳过"恢复旧滚动位置"，
+  // 否则 scrollTo(0, y) 会在书签/搜索跳转的定位滚动之后执行，把结果覆盖回顶部
+  let jumpScrollCid: string | null = null
   const jumpBookmark = (bm: Bookmark) => {
     setTocOpen(false)
-    const si = bmAdjusted(bm).sis[0] ?? 0 // v1 旧书签按当前坐标定位
     if (params.cid === bm.cid && contentCid() === bm.cid) {
+      // 同章：内容已加载，直接按当前坐标换算定位
+      const si = bmAdjusted(bm).sis[0] ?? 0 // v1 旧书签按当前坐标定位
       document.querySelector(`[data-si="${si}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
       return
     }
-    pendingJump = { cid: bm.cid, si }
+    // 跨章：目标章内容尚未加载，v1 旧书签的 si 是旧分句坐标、且换算依赖目标章内容，
+    // 不能在这里按当前章内容换算（会得到错误句号）；携带 bmId 由跳转 effect 在
+    // 目标章内容就绪后换算定位
+    pendingJump = { cid: bm.cid, si: bm.sis[0] ?? 0, bmId: bm.id }
     navigate(`/books/${bookId}/read/${bm.cid}`)
   }
 
@@ -609,8 +616,9 @@ export default function ReaderPage() {
       const saved = progress()
       const y = saved && saved.cid === c.id ? saved.y : 0
       saveProgress(c.id, y)
-      // 书签跳转目标章：由下面的跳转 effect 滚到书签句，不恢复旧滚动位置
-      if (!(pendingJump && pendingJump.cid === c.id))
+      // 书签/搜索跳转目标章：跳转 effect 已为该章调度定位滚动（jumpScrollCid），
+      // 此时不恢复旧滚动位置，避免 scrollTo 把定位结果覆盖掉
+      if (jumpScrollCid !== c.id)
         requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y)))
     } catch (e: any) {
       if (params.cid !== c.id) return
@@ -992,11 +1000,21 @@ export default function ReaderPage() {
   // reader-find 传入（均 60s 内有效，消费即删）
   createEffect(() => {
     const cid = contentCid()
+    // 每次运行先清除：只有本次真的为某章调度了定位滚动才置回，避免旧的跳转标记
+    // 让后续手动进入同一章时误跳过滚动恢复
+    jumpScrollCid = null
     if (!cid) return
     let si: number | null = null
     if (pendingJump) {
-      if (pendingJump.cid !== cid) return
-      si = pendingJump.si
+      const pj = pendingJump
+      if (pj.cid !== cid) return
+      si = pj.si
+      // 跨章书签跳转带书签 id（v1 旧书签 si 为旧分句坐标）：目标章内容已加载，
+      // 此时 chapter()/content() 才是目标章的，按当前坐标换算后再定位
+      if (pj.bmId) {
+        const bm = book()?.bookmarks?.find(b => b.id === pj.bmId)
+        if (bm) si = bmAdjusted(bm).sis[0] ?? si
+      }
       pendingJump = null
     } else {
       try {
@@ -1017,6 +1035,7 @@ export default function ReaderPage() {
       } catch { /* 忽略 */ }
     }
     if (si != null && !Number.isNaN(si)) {
+      jumpScrollCid = cid
       requestAnimationFrame(() => requestAnimationFrame(() =>
         document.querySelector(`[data-si="${si}"]`)?.scrollIntoView({ block: 'center' })))
       return
@@ -1029,6 +1048,7 @@ export default function ReaderPage() {
       if (Date.now() - Number(j.ts) > 60_000) { sessionStorage.removeItem(key); return }
       if (j.cid !== cid || typeof j.q !== 'string') return
       sessionStorage.removeItem(key)
+      jumpScrollCid = cid
       requestAnimationFrame(() => requestAnimationFrame(() => findAndScroll(j.q)))
     } catch { /* 忽略 */ }
   })
