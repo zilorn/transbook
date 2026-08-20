@@ -275,10 +275,11 @@ export default function BookDetail() {
     const c = book()?.chapters.find(x => x.id === cid)
     return c ? (c.title_translated || c.title) : '章节已删除'
   }
-  // 跳转阅读器对应章节的书签句：经 sessionStorage 把句号带给阅读器（60s 内有效）
+  // 跳转阅读器对应章节的书签句：经 sessionStorage 把句号带给阅读器（60s 内有效）；
+  // 带 bmId 供阅读器把 v1 旧书签的 si 按当前分句坐标换算后再定位
   const jumpBookmark = (bm: Bookmark) => {
     sessionStorage.setItem(`reader-jump:${bookId}`,
-      JSON.stringify({ cid: bm.cid, si: bm.sis[0] ?? 0, ts: Date.now() }))
+      JSON.stringify({ cid: bm.cid, si: bm.sis[0] ?? 0, bmId: bm.id, ts: Date.now() }))
     navigate(`/books/${bookId}/read/${bm.cid}`)
   }
 

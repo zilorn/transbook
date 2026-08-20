@@ -109,6 +109,9 @@ export interface Bookmark {
   created_at: number
   /** 句内选取的字符区间（相对该句文本的偏移）；缺省（旧数据）表示整句划线 */
   ranges?: { si: number; start: number; end: number }[]
+  /** 分句版本：2 起 ranges 以新分句坐标（句读标点/闭引号归入所在句）为基准；
+      缺省（v1）的 ranges 以旧分句坐标为基准，阅读器渲染前自动换算，无需迁移 */
+  seg_v?: number
 }
 
 // GET /api/books/{id} / POST /api/books 的整书结构

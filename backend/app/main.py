@@ -318,6 +318,9 @@ class BookmarkIn(BaseModel):
     sis: list[int]
     text: str
     ranges: list[BookmarkRangeIn] | None = None  # 每句内选取的字符区间；缺省（旧数据）= 整句划线
+    # 分句版本：2 起 ranges 以新分句坐标（句读标点/闭引号归入所在句）为基准；
+    # 缺省 = v1 旧分句坐标（阅读器渲染前自动换算，旧书签无需迁移）
+    seg_v: int | None = None
 
 
 @app.post("/api/books/{book_id}/bookmarks")
@@ -340,6 +343,8 @@ def add_bookmark(book_id: str, body: BookmarkIn):
                   if r.si in si_set and 0 <= r.start < r.end]
         if ranges:
             bm["ranges"] = ranges
+    if body.seg_v is not None:
+        bm["seg_v"] = body.seg_v
     book.setdefault("bookmarks", []).append(bm)
     store.save_book(book)
     return bm

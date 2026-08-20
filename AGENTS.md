@@ -106,13 +106,17 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   （`{text, voice, rate}`）合成任意文本为 mp3，按 `sha1(音色+倍速+文本)` 全局缓存到
   `data/tts_cache/`（跨书复用；合成写唯一临时文件，完成转正，中断删残片）；
   文本上限 `MAX_TEXT_CHARS`（1000 字）防滥用。音色白名单 `tts.VOICES`（中文显示名），
-  非法音色 400。前端分句规则 `SEG_RE`（句读标点/换行）：txt 始终按句渲染
+  非法音色 400。前端分句规则：`splitSentencesNew`（v3 新分句；`SEG_RE_OLD` 为 v1 旧分句，
+  仅用于旧书签坐标换算，不参与渲染）——句读标点（。！？!?…）结束一句，其后的
+  闭引号/括号（」』」』）】》〉”’"'）并入上一句，行首纯标点（……、！！、孤立的」等）并入
+  后续文字而不是丢字，换行是硬边界（连续换行仍为独立段）。si 编号：所有非空白段都编号
+  （**纯标点段如单独成行的「……」、……、※※※ 也作为停顿句朗读**并参与高亮/书签，
+  edge-tts 对纯标点合成静音停顿），仅纯换行/纯空白段 si=-1；含文字的句数量与 si 顺序和
+  旧分句完全一致（旧书签经 `bmAdjusted` 按字符绝对位置换算）。txt 始终按句渲染
   `span[data-si]`；epub 用 `splitEpubHtml`（DOMParser 处理 HTML 字符串，按章节缓存）
   同步拆出句级 span 并收集句文本——**不依赖渲染后 DOM 的 effect/ref 时序**（曾因竞态
   导致句清单为空），渲染的句与朗读的句是同一份数据；拆句跳过 style/script/title
-  内的文本与纯空白节点。纯标点段（不含任何字母/数字/汉字，如异常分割出的
-  「」、——、※※）也不朗读：txt 记 si=-1、epub 按原样渲染不包 span，
-  均不进朗读句清单（`speakable` 判断）。
+  内的文本与纯空白节点。纯换行/纯空白段不朗读（txt 记 si=-1、epub 按原样渲染不包 span）。
   章节标题也朗读：可朗读的标题（`titleText`，译名优先）固定为朗读句清单第 0 句，
   正文句号从 1 起编（`titleOffset`；epub 拆句缓存 key 含 titleOffset），
   正文 `<h1>` 标题带 `data-si="0"` 参与高亮/滚动（标题不可朗读时不编号、正文仍从 0 起）。
@@ -137,21 +141,29 @@ docker compose up -d --build              # Docker 一键部署：镜像内构�
   暂停/关闭/切章时递增 `playGen`，在途的下一句合成等待被作废（句间隙暂停也能立刻停住）。
 - **书签/文本选取（阅读器）**：监听 `selectionchange`（去抖 120ms，移动端拖动句柄停手后才出条）
   在选区上方弹自定义工具条（复制/书签/朗读），工具条 `pointerdown` preventDefault 防点按钮前选区被清；
-  选取与任一书签的划线区间逐字相交（`selRanges` vs 书签 `ranges` 区间重叠判断；无 `ranges` 的旧书签
-  退化为整句相交）时书签按钮变为「取消书签」，点击删除本章所有与选取逐字相交的书签（`unbookmarkSel`）；
+  选取与任一书签的划线区间逐字相交（`selRanges` vs 书签 `ranges` 区间重叠判断；旧书签经
+  `bmAdjusted` 换算到当前坐标后按同一规则判断）时书签按钮变为「取消书签」，点击删除本章所有
+  与选取逐字相交的书签（`unbookmarkSel`）；
   正文容器 `[-webkit-touch-callout:none]` + `contextmenu` preventDefault 屏蔽原生 callout/右键菜单
   （Android Chrome 选中后的系统浮动菜单无法用 Web API 完全屏蔽）。书签存 `book.json` 的
-  `bookmarks`（`{id, cid, sis[], text, created_at, ranges?}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
+  `bookmarks`（`{id, cid, sis[], text, created_at, ranges?, seg_v?}`）：`sis` 为章节内朗读句下标（`span[data-si]`，
   重译后下标可能漂移，`text` 是添加时的文本快照）；`ranges`（`{si, start, end}[]`）记录选取在每句内
   覆盖的字符区间（相对该句文本的偏移），下划线精确到选取的字：新书签只给区间内的字加 `.bm-mark`
   橙色下划线（txt 用 `markParts` 把句文本切成划线/普通片段渲染，epub 用 `wrapTextRange`
   把句 span 内对应文本包 `.bm-mark.bm-part`，重刷前先拆旧包裹还原；跨界包裹失败兜底整句切类）；
-  无 `ranges` 的旧书签仍整句划线（txt 走 Solid classList，epub 走 effect 切类，与 `.tts-active` 同套路）。
+  **ranges 坐标与分句版本绑定**：v3 起新书签带 `seg_v: 3`，ranges 直接以当前分句坐标为基准
+  （所有非空白段都编号，含纯标点停顿段，均可划线与命中）；无 `seg_v` 的 v1 旧书签渲染前经
+  `bmAdjusted`（`segInfo` 对当前内容同时跑 `splitSentencesOld`/`splitSentencesNew`，按字符
+  绝对位置把旧 sis 与旧 ranges 一起换算到当前坐标，跨句的旧区间拆成多个新区间；无 ranges
+  的旧整句书签按旧句段合成 ranges，旧句跨新句时不整句误划）换算，下划线仍落在当初选中的
+  字上——分句改版不迁移旧数据（v2 从未发布，seg_v < 3 一律按 v1 换算）。换算结果按
+  (章节内容, 书签 id) 缓存（`bmAdjustCache`），txt 渲染逐句查询不可每次重算；
+  书签跳转（含书籍详情页跨页跳转，sessionStorage `reader-jump` 带 `bmId`）也按当前坐标定位。
   epub 正文容器的 ref `segEl`
   必须是 signal（`createSignal`）而非普通变量：div 创建晚于首批 effect 执行，普通变量
   不触发重跑，依赖它的 effect 在 ref 赋值前 bailout 后不再重跑，会导致直开章节时
-  `.bm-mark`/`.tts-active` 不显示。朗读起点取选区内第一个含文字
-  （`\p{L}\p{N}`）字符所在的句（首字符是标点则顺延）。书签查看/删除：目录抽屉「书签」页签 +
+  `.bm-mark`/`.tts-active` 不显示。朗读起点取选区内第一个含非空白字符的句
+  （`ttsStartSi`，纯标点停顿段也可作为起点）。书签查看/删除：目录抽屉「书签」页签 +
   书籍详情页「书签」标签页；跳转页内直接 `scrollIntoView`，跨页经 sessionStorage
   `reader-jump:<bookId>`（60s 内有效，消费即删），跳转到目标章时不恢复旧滚动位置。
   全书搜索（BookSearchPage，阅读器顶栏放大镜进入）纯前端逐章拉内容匹配（译文优先，

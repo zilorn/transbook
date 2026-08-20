@@ -98,11 +98,89 @@ export default function ReaderPage() {
   const audioCache = new Map<number, Promise<Blob>>() // 本章音频缓存：句号 → 合成 Promise（失败不缓存）
   let prefetchGen = 0 // 预缓存代际：切章/换音色时作废旧的后台预取
 
-  // 分句规则：一句（含结尾标点）或连续换行
-  const SEG_RE = /[^。！？!?…\n]+[。！？!?…]*|\n+/g
-  // 可朗读判断：至少含一个字母/数字/汉字等文字；纯标点段（如异常分割出的「」、——、※※）不朗读
+  // 可朗读判断：至少含一个字母/数字/汉字等文字；纯标点段（如「」、——、※※）不朗读
   const speakable = (t: string) => /[\p{L}\p{N}]/u.test(t)
-  interface Seg { t: string; si: number } // si=-1 为纯换行/纯标点段，不朗读；其余按顺序编号
+  interface Seg { t: string; si: number } // si=-1 为纯换行/纯空白段，不朗读；纯标点段也编号（作为停顿朗读）
+  interface SplitSeg { si: number; text: string; start: number } // start 为在输入文本中的绝对偏移
+  // 旧分句规则（v1 书签 ranges 坐标基准）：一句（含结尾标点）或连续换行。
+  // 缺陷：行首省略号/感叹号等会整体丢字，句尾闭引号（」）被拆成独立纯标点段。
+  // 仅用于把旧书签 ranges 换算到新分句坐标，不再参与渲染。
+  const SEG_RE_OLD = /[^。！？!?…\n]+[。！？!?…]*|\n+/g
+  const splitSentencesOld = (txt: string, startSi: number): { segs: SplitSeg[]; nextSi: number } => {
+    const segs: SplitSeg[] = []
+    let si = startSi
+    for (const m of txt.matchAll(SEG_RE_OLD)) {
+      const t = m[0]
+      segs.push({ si: speakable(t) ? si++ : -1, text: t, start: m.index })
+    }
+    return { segs, nextSi: si }
+  }
+  // 新分句：句读标点（。！？!?…）结束一句；其后的闭引号/括号（」』」』）】》〉”’"'）并入上一句；
+  // 行首纯标点（……、！！、孤立的」等）并入后续文字而不是丢字；换行是硬边界（连续换行仍为独立段）。
+  // si 编号（v3）：所有非空白段都编号（纯标点段如单独成行的「……」、……、※※※ 也作为
+  // 停顿句朗读并参与高亮/书签，edge-tts 对纯标点合成出静音停顿），仅纯换行/纯空白段 si=-1。
+  // 关键不变式：可朗读句（含文字）的数量与 si 顺序和旧分句完全一致——旧书签经 bmAdjusted
+  // 按字符绝对位置把 sis/ranges 换算到当前坐标，划线仍落在当初选中的字上。
+  const SEG_ENDERS = new Set([...'。！？!?…'])
+  const SEG_CLOSERS = new Set([...'」』）】》〉”’"\''])
+  const SEG_OPENERS = new Set([...'「『（【《〈“‘"\''])
+  const splitSentencesNew = (txt: string, startSi: number): { segs: SplitSeg[]; nextSi: number } => {
+    const segs: SplitSeg[] = []
+    let si = startSi
+    let buf = ''
+    let bufStart = 0
+    let hasWord = false // buf 是否已含文字（行首纯标点不结束一句，并入后续文字）
+    let trailing = false // 刚结束一句：后续句读标点/闭引号并入上一句
+    const add = (ch: string, i: number) => { if (!buf) bufStart = i; buf += ch; if (speakable(ch)) hasWord = true }
+    const flush = () => {
+      if (!buf) return
+      segs.push({ si: /\S/.test(buf) ? si++ : -1, text: buf, start: bufStart })
+      buf = ''
+      hasWord = false
+      trailing = true
+    }
+    const n = txt.length
+    let i = 0
+    while (i < n) {
+      // 按码点取字符（代理对不拆开），i 保持为码元偏移（与 slice/选区偏移一致）
+      const ch = String.fromCodePoint(txt.codePointAt(i)!)
+      const step = ch.length
+      if (ch === '\n') {
+        flush()
+        let j = i
+        while (j < n && txt[j] === '\n') j++
+        segs.push({ si: -1, text: txt.slice(i, j), start: i })
+        i = j
+        trailing = false
+        continue
+      }
+      if (SEG_ENDERS.has(ch)) {
+        if (trailing && !buf) {
+          const last = segs[segs.length - 1]
+          if (last) { last.text += ch; i += step; continue }
+        }
+        add(ch, i)
+        if (hasWord) flush()
+        i += step
+        continue
+      }
+      if (SEG_CLOSERS.has(ch)) {
+        if (trailing && !buf) {
+          const last = segs[segs.length - 1]
+          if (last) { last.text += ch; i += step; continue }
+        }
+        add(ch, i)
+        i += step
+        continue
+      }
+      if (SEG_OPENERS.has(ch)) { trailing = false; add(ch, i); i += step; continue }
+      trailing = false
+      add(ch, i)
+      i += step
+    }
+    flush()
+    return { segs, nextSi: si }
+  }
   // 章节标题也朗读：固定为第 0 句（正文 h1 加 span[data-si="0"] 参与高亮），正文句号从 1 起编
   const titleText = (): string => {
     const c = chapter()
@@ -114,8 +192,7 @@ export default function ReaderPage() {
   const segments = (): Seg[] => {
     const txt = content().trim()
     if (!txt) return []
-    let si = titleOffset()
-    return (txt.match(SEG_RE) || []).map(t => ({ t, si: speakable(t) ? si++ : -1 }))
+    return splitSentencesNew(txt, titleOffset()).segs.map(s => ({ t: s.text, si: s.si }))
   }
 
   // 当前章节的朗读句清单：标题（可朗读时）为第 0 句，随后 txt 由正文直接分句、
@@ -132,7 +209,8 @@ export default function ReaderPage() {
 
   // epub：用 DOMParser 处理 HTML 字符串（不依赖渲染时机，避免 effect/ref 竞态导致句清单为空），
   // 把文本节点拆成句级 span[data-si] 并同步收集句文本作为朗读清单——渲染的句与朗读的句是同一份数据。
-  // 跳过 style/script/title 内的文本、纯空白节点与纯标点段（不朗读，按原样渲染不高亮）。
+  // 跳过 style/script/title 内的文本与纯空白节点；纯换行/纯空白段（不朗读，按原样渲染不包 span），
+  // 纯标点段（如「……」、……、※※※）也包 span 编号，作为停顿句朗读。
   // segEl 用 signal 而非普通变量：epub 正文 div 的创建晚于首批 effect 执行，
   // 普通变量不触发重跑，依赖 segEl 的 effect（tts 高亮/书签下划线）会在 ref 赋值前
   //  bailout 且之后再不重跑，导致首次进章节标记不显示
@@ -153,13 +231,15 @@ export default function ReaderPage() {
     for (const node of nodes) {
       const stripped = node.data.trim()
       if (!stripped) continue
+      const r = splitSentencesNew(stripped, si)
+      si = r.nextSi
       const frag = doc.createDocumentFragment()
-      for (const part of stripped.match(SEG_RE) || []) {
-        if (!speakable(part)) { frag.appendChild(doc.createTextNode(part)); continue }
+      for (const s of r.segs) {
+        if (s.si < 0) { frag.appendChild(doc.createTextNode(s.text)); continue }
         const span = doc.createElement('span')
-        span.dataset.si = String(si++)
-        span.textContent = part
-        texts.push(part)
+        span.dataset.si = String(s.si)
+        span.textContent = s.text
+        texts.push(s.text)
         frag.appendChild(span)
       }
       node.replaceWith(frag)
@@ -198,18 +278,120 @@ export default function ReaderPage() {
       (chIdx.get(a.cid) ?? Number.MAX_SAFE_INTEGER) - (chIdx.get(b.cid) ?? Number.MAX_SAFE_INTEGER)
       || Math.min(...a.sis) - Math.min(...b.sis))
   }
-  // 当前章节被书签覆盖的句号集合（用于选取命中判断 / 旧数据整句划线）
+  // 当前章节被书签覆盖的句号集合（用于标题划线 / 旧数据整句命中判断）
   const bmSis = (): Set<number> =>
-    new Set(bookmarks().filter(b => b.cid === params.cid).flatMap(b => b.sis))
-  // 旧数据（无 ranges）：整句划线的句号集合
-  const bmWholeSis = (): Set<number> =>
-    new Set(bookmarks().filter(b => b.cid === params.cid && !b.ranges?.length).flatMap(b => b.sis))
-  // 新数据：句号 → 句内字符区间列表（只划选取的那部分字）
+    new Set(bookmarks().filter(b => b.cid === params.cid).flatMap(b => bmAdjusted(b).sis))
+  // 当前分句版本：v3 起所有非空白段（含纯标点停顿段）都编号；v1 旧书签（无 seg_v）的
+  // sis/ranges 以旧分句坐标为基准，渲染前经 bmAdjusted 按字符绝对位置换算到当前坐标。
+  // v2 从未发布（仅本仓库中间态），seg_v < 3 一律按 v1 坐标换算。
+  const SEG_V = 3
+  // epub 拆句与旧书签换算共用的文本节点序列（跳过 style/script/title/noscript 与纯空白节点，
+  // 与 splitEpubHtml 的 walker 保持一致；两处必须同步修改）
+  const epubNodeTexts = (html: string): string[] => {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const walker = doc.createTreeWalker(doc.body || doc.documentElement, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        const p = (n as Text).parentElement
+        return p && p.closest('style,script,title,noscript')
+          ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT
+      },
+    })
+    const out: string[] = []
+    while (walker.nextNode()) {
+      const t = (walker.currentNode as Text).data.trim()
+      if (t) out.push(t)
+    }
+    return out
+  }
+  interface SegInfo { si: number; text: string; node: number; start: number }
+  // 当前章节内容在 旧/新 两种分句下的句段清单（含绝对偏移），按内容缓存；供旧书签换算
+  let segInfoCache: { key: string; v: { old: SegInfo[]; nov: SegInfo[] } } | null = null
+  const segInfo = (): { old: SegInfo[]; nov: SegInfo[] } | null => {
+    const c = chapter()
+    const h = content()
+    if (!c || !h) return null
+    const to = titleOffset()
+    const key = `${c.id}:${h.length}:${to}:${c.format}`
+    if (segInfoCache?.key === key) return segInfoCache.v
+    let old: SegInfo[] = []
+    let nov: SegInfo[] = []
+    if (c.format === 'epub') {
+      let siOld = to, siNew = to
+      epubNodeTexts(h).forEach((t, ni) => {
+        const a = splitSentencesOld(t, siOld)
+        siOld = a.nextSi
+        for (const s of a.segs) old.push({ ...s, node: ni })
+        const b = splitSentencesNew(t, siNew)
+        siNew = b.nextSi
+        for (const s of b.segs) nov.push({ ...s, node: ni })
+      })
+    } else {
+      const t = h.trim()
+      old = splitSentencesOld(t, to).segs.map(s => ({ ...s, node: 0 }))
+      nov = splitSentencesNew(t, to).segs.map(s => ({ ...s, node: 0 }))
+    }
+    segInfoCache = { key, v: { old, nov } }
+    return segInfoCache.v
+  }
+  // v1 书签 → 当前坐标：sis 按旧句段覆盖的字符区间映射到新句号；ranges 按字符绝对位置映射
+  // （跨句的旧区间拆成多个新区间）。无 ranges 的旧书签按旧句段整体合成 ranges（保持整句划线，
+  // 旧句跨新句时不整句误划）。标题（si=0）坐标不变直接透传。
+  // 结果按 (章节内容, 书签 id) 缓存——txt 渲染逐句查询，不能每次重算。
+  let bmAdjustCache: { key: string; m: Map<string, { sis: number[]; ranges: { si: number; start: number; end: number }[] }> } | null = null
+  const bmAdjusted = (b: Bookmark): { sis: number[]; ranges: { si: number; start: number; end: number }[] } => {
+    if (b.seg_v && b.seg_v >= SEG_V) return { sis: b.sis, ranges: b.ranges ?? [] }
+    const c = chapter()
+    const h = content()
+    if (!c || !h) return { sis: b.sis, ranges: b.ranges ?? [] }
+    const to = titleOffset()
+    const key = `${c.id}:${h.length}:${to}:${c.format}`
+    if (!bmAdjustCache || bmAdjustCache.key !== key) bmAdjustCache = { key, m: new Map() }
+    const cached = bmAdjustCache.m.get(b.id)
+    if (cached) return cached
+    const info = segInfo()
+    if (!info) return { sis: b.sis, ranges: b.ranges ?? [] }
+    const sis: number[] = []
+    const srcRanges = b.ranges?.length
+      ? b.ranges
+      : b.sis.map(si => {
+          if (si === 0 && to === 1) return { si: 0, start: 0, end: titleText().length }
+          const os = info.old.find(s => s.si === si)
+          return os ? { si, start: 0, end: os.text.length } : null
+        }).filter((r): r is { si: number; start: number; end: number } => !!r)
+    const ranges: { si: number; start: number; end: number }[] = []
+    for (const si of b.sis) {
+      if (si === 0 && to === 1) { sis.push(0); continue }
+      const os = info.old.find(s => s.si === si)
+      if (!os) continue
+      const absEnd = os.start + os.text.length
+      for (const ns of info.nov) {
+        if (ns.si < 0 || ns.node !== os.node) continue
+        if (ns.start < absEnd && ns.start + ns.text.length > os.start) sis.push(ns.si)
+      }
+    }
+    for (const r of srcRanges) {
+      if (r.si === 0 && to === 1) { ranges.push(r); continue }
+      const os = info.old.find(s => s.si === r.si)
+      if (!os) continue
+      const absS = os.start + r.start
+      const absE = os.start + r.end
+      for (const ns of info.nov) {
+        if (ns.si < 0 || ns.node !== os.node) continue
+        const s = Math.max(absS, ns.start)
+        const e = Math.min(absE, ns.start + ns.text.length)
+        if (e > s) ranges.push({ si: ns.si, start: s - ns.start, end: e - ns.start })
+      }
+    }
+    const v = { sis, ranges }
+    bmAdjustCache.m.set(b.id, v)
+    return v
+  }
+  // 句号 → 句内字符区间列表（只划选取的那部分字；v1 旧书签经 bmAdjusted 换算/合成）
   const bmPartRanges = (): Map<number, { start: number; end: number }[]> => {
     const m = new Map<number, { start: number; end: number }[]>()
     for (const b of bookmarks()) {
-      if (b.cid !== params.cid || !b.ranges?.length) continue
-      for (const r of b.ranges) {
+      if (b.cid !== params.cid) continue
+      for (const r of bmAdjusted(b).ranges) {
         const arr = m.get(r.si) ?? []
         arr.push({ start: r.start, end: r.end })
         m.set(r.si, arr)
@@ -308,8 +490,8 @@ export default function ReaderPage() {
     return out
   }
 
-  // 朗读起点：从选取第 1 个字符所在的句开始；是标点则顺延到下一句含文字的字符
-  // （实现：按文档序找第一个"交叠片段内含文字字符"的句 span）
+  // 朗读起点：从选取第 1 个字符所在的句开始；纯空白则顺延到下一句有内容的字符
+  // （实现：按文档序找第一个"交叠片段内含非空白字符"的句 span；纯标点停顿段也算起点）
   const ttsStartSi = (range: Range): number => {
     for (const el of contentRef?.querySelectorAll<HTMLElement>('span[data-si]') ?? []) {
       try {
@@ -319,7 +501,7 @@ export default function ReaderPage() {
         sr.selectNodeContents(el)
         if (r.compareBoundaryPoints(Range.START_TO_START, sr) < 0) r.setStart(sr.startContainer, sr.startOffset)
         if (r.compareBoundaryPoints(Range.END_TO_END, sr) > 0) r.setEnd(sr.endContainer, sr.endOffset)
-        if (/[\p{L}\p{N}]/u.test(r.toString())) return Number(el.dataset.si)
+        if (/\S/.test(r.toString())) return Number(el.dataset.si)
       } catch { /* 游离节点 */ }
     }
     return -1
@@ -341,24 +523,23 @@ export default function ReaderPage() {
     clearSel()
     if (!ranges.length || !text) return
     try {
-      const bm = await api.addBookmark(bookId, { cid: c.id, sis: ranges.map(r => r.si), text, ranges })
+      const bm = await api.addBookmark(bookId, { cid: c.id, sis: ranges.map(r => r.si), text, ranges, seg_v: SEG_V })
       setBook(prev => prev && { ...prev, bookmarks: [...(prev.bookmarks ?? []), bm] })
     } catch { /* 失败静默：下次选取可再试 */ }
   }
 
-  // 选取与任一书签的划线区间逐字相交（旧书签无 ranges 按整句算）时，工具条改显示"取消书签"
+  // 选取与任一书签的划线区间逐字相交（旧书签经 bmAdjusted 换算到当前坐标）时，工具条改显示"取消书签"
   const selHasBm = (): boolean => {
-    const whole = bmWholeSis()
     const parts = bmPartRanges()
     return selRanges().some(r =>
-      whole.has(r.si) || !!parts.get(r.si)?.some(br => br.start < r.end && r.start < br.end))
+      !!parts.get(r.si)?.some(br => br.start < r.end && r.start < br.end))
   }
   const unbookmarkSel = () => {
     const sel = selRanges()
     const toRemove = bookmarks().filter(b => {
       if (b.cid !== params.cid) return false
-      if (!b.ranges?.length) return b.sis.some(si => sel.some(r => r.si === si))
-      return b.ranges.some(br => sel.some(r => r.si === br.si && br.start < r.end && r.start < br.end))
+      const adj = bmAdjusted(b) // v1 旧书签按当前坐标参与命中判断
+      return adj.ranges.some(br => sel.some(r => r.si === br.si && br.start < r.end && r.start < br.end))
     })
     clearSel()
     for (const bm of toRemove) delBookmark(bm)
@@ -389,7 +570,7 @@ export default function ReaderPage() {
   let pendingJump: { cid: string; si: number } | null = null
   const jumpBookmark = (bm: Bookmark) => {
     setTocOpen(false)
-    const si = bm.sis[0] ?? 0
+    const si = bmAdjusted(bm).sis[0] ?? 0 // v1 旧书签按当前坐标定位
     if (params.cid === bm.cid && contentCid() === bm.cid) {
       document.querySelector(`[data-si="${si}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
       return
@@ -751,10 +932,10 @@ export default function ReaderPage() {
   })
 
   // epub 书签橙色下划线：内容重渲染（innerHTML）或书签增删后重刷（txt 由 Solid 渲染切片）。
-  // 无 ranges 的旧书签整句切类；有 ranges 的按句内字符区间包 .bm-mark.bm-part 局部划线
+  // 按句内字符区间包 .bm-mark.bm-part 局部划线（旧书签经 bmAdjusted 换算/合成整句区间，
+  // 旧整句书签跨新句时不误划整句）；跨界包裹失败兜底整句切类
   createEffect(() => {
     const c = chapter()
-    const whole = bmWholeSis()
     const parts = bmPartRanges()
     const el = segEl()
     if (!epubSeg() || !el || c?.format !== 'epub') return
@@ -766,8 +947,6 @@ export default function ReaderPage() {
       p.removeChild(e)
     })
     el.normalize()
-    for (const e of el.querySelectorAll<HTMLElement>('span[data-si]'))
-      if (whole.has(Number(e.dataset.si))) e.classList.add('bm-mark')
     for (const [si, rs] of parts) {
       const span = el.querySelector<HTMLElement>(`span[data-si="${si}"]`)
       if (!span) continue
@@ -825,7 +1004,15 @@ export default function ReaderPage() {
         const j = JSON.parse(sessionStorage.getItem(key) || 'null')
         if (j) {
           if (Date.now() - Number(j.ts) > 60_000) sessionStorage.removeItem(key)
-          else if (j.cid === cid) { sessionStorage.removeItem(key); si = Number(j.si) }
+          else if (j.cid === cid) {
+            sessionStorage.removeItem(key)
+            si = Number(j.si)
+            // 跨页跳转带书签 id 时（v1 旧书签 si 为旧分句坐标），按当前坐标换算后再定位
+            if (j.bmId) {
+              const bm = book()?.bookmarks?.find(b => b.id === j.bmId)
+              if (bm) si = bmAdjusted(bm).sis[0] ?? si
+            }
+          }
         }
       } catch { /* 忽略 */ }
     }
@@ -1027,7 +1214,7 @@ export default function ReaderPage() {
                       style={{ 'font-size': `${settings().fontSize}px`, 'line-height': 1.9 }}>
                       <For each={segments()}>{(seg) => seg.si < 0 ? seg.t : (
                         <span data-si={seg.si} class="px-[1px]"
-                          classList={{ 'tts-active': seg.si === ttsIdx(), 'bm-mark': bmWholeSis().has(seg.si) }}>
+                          classList={{ 'tts-active': seg.si === ttsIdx() }}>
                           {bmPartRanges().get(seg.si)
                             ? <For each={markParts(seg.t, bmPartRanges().get(seg.si)!)}>{(p) =>
                                 p.mark ? <span class="bm-mark">{p.t}</span> : p.t}</For>

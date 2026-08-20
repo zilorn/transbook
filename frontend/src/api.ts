@@ -142,7 +142,7 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cid, y }),
     }),
-  addBookmark: (id: string, bm: { cid: string; sis: number[]; text: string; ranges?: { si: number; start: number; end: number }[] }): Promise<Bookmark> =>
+  addBookmark: (id: string, bm: { cid: string; sis: number[]; text: string; ranges?: { si: number; start: number; end: number }[]; seg_v?: number }): Promise<Bookmark> =>
     req(`/api/books/${id}/bookmarks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
