@@ -871,6 +871,51 @@ export default function ReaderPage() {
     }
   }
 
+  // ---- 定时关闭：设定结束时刻（毫秒时间戳，0=未开启），到点自动停止播放 ----
+  const [sleepEnds, setSleepEnds] = createSignal(0)
+  const [sleepNow, setSleepNow] = createSignal(0) // 每秒 tick，驱动剩余时间显示
+  const [sleepCustom, setSleepCustom] = createSignal(false) // 自定义分钟数输入行
+  const [sleepError, setSleepError] = createSignal('') // 自定义输入校验错误
+  const [sleepMin, setSleepMin] = createSignal('') // 自定义输入值
+  const sleepRemain = createMemo(() => Math.max(0, sleepEnds() - sleepNow()))
+  const fmtSleep = (ms: number) => {
+    const s = Math.max(0, Math.ceil(ms / 1000))
+    const h = Math.floor(s / 3600)
+    const mm = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+    const ss = String(s % 60).padStart(2, '0')
+    return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+  }
+  const setSleep = (ms: number) => { setSleepEnds(Date.now() + ms); setSleepNow(Date.now()); setSleepError('') }
+  const clearSleep = () => { setSleepEnds(0); setSleepCustom(false); setSleepError('') }
+  const applyCustomSleep = () => {
+    const n = Number(sleepMin())
+    if (!Number.isInteger(n) || n < 1 || n > 1440) { setSleepError('请输入 1～1440 的整数分钟'); return }
+    setSleep(n * 60000)
+  }
+  // 到点停止：与暂停相同的中断方式（保留朗读位置），但保留悬浮球面板，状态行提示用户
+  const stopBySleep = () => {
+    setSleepEnds(0)
+    setSleepCustom(false)
+    if (wantPlay) {
+      setWant(false)
+      playGen++
+      killPlayback()
+      void actx?.suspend()
+      setTtsBusy(false)
+      setTtsError('定时结束，已停止播放')
+    }
+  }
+  // 倒计时 tick：sleepEnds 变化时重建定时器，到点触发停止（暂停中到点仅静默清除）
+  createEffect(() => {
+    const end = sleepEnds()
+    if (!end) { setSleepNow(0); return }
+    const id = setInterval(() => {
+      if (Date.now() >= end) stopBySleep()
+      else setSleepNow(Date.now())
+    }, 500)
+    onCleanup(() => clearInterval(id))
+  })
+
   const closeTts = () => {
     setWant(false)
     playGen++
@@ -879,6 +924,7 @@ export default function ReaderPage() {
     setTtsOpen(false)
     setTtsIdx(-1)
     setTtsFollow(true)
+    clearSleep()
   }
 
   // 切章/换音色：清空本章音频缓存与朗读位置，作废在途的合成等待与调度
@@ -1209,7 +1255,7 @@ export default function ReaderPage() {
       <div class="max-w-[800px] mx-auto px-4 md:px-6 pt-5 [-webkit-touch-callout:none]"
         ref={(el) => { contentRef = el }}
         onContextMenu={(e) => e.preventDefault()}
-        style={{ 'padding-bottom': ttsOpen() ? (ttsCtlOpen() ? '180px' : '100px') : '32px' }}>
+        style={{ 'padding-bottom': ttsOpen() ? (ttsCtlOpen() ? '220px' : '100px') : '32px' }}>
         <Show when={!loading()} fallback={<p class="text-center py-[60px] opacity-60">加载中…</p>}>
           <Show when={!error()} fallback={
             <div class="text-center py-[60px]">
@@ -1356,6 +1402,52 @@ export default function ReaderPage() {
                     {([id, name]) => <option value={id}>{name}</option>}
                   </For>
                 </select>
+              </div>
+              {/* 定时关闭：预设 15分/30分/1小时 一键设定；自定义分钟数（1～1440）；
+                  设定后倒计时显示剩余时间，点击即可取消 */}
+              <div class="mt-2 pt-2 border-t" style={{ 'border-color': theme().line }}>
+                <Show when={sleepEnds() > 0} fallback={
+                  <Show when={sleepCustom()} fallback={
+                    <div class="flex gap-1.5">
+                      <button class="small flex-1 px-0.5" title="15 分钟后自动停止播放"
+                        onClick={() => setSleep(15 * 60000)}>15分</button>
+                      <button class="small flex-1 px-0.5" title="30 分钟后自动停止播放"
+                        onClick={() => setSleep(30 * 60000)}>30分</button>
+                      <button class="small flex-1 px-0.5" title="1 小时后自动停止播放"
+                        onClick={() => setSleep(60 * 60000)}>1小时</button>
+                      <button class="small flex-1 px-0.5" title="自定义分钟数"
+                        onClick={() => { setSleepError(''); setSleepCustom(true) }}>自定义</button>
+                    </div>
+                  }>
+                    <div>
+                      <div class="flex items-center gap-1.5">
+                        <input type="number" min={1} max={1440} inputmode="numeric" placeholder="分钟"
+                          class="w-[56px] min-w-0 shrink-0 text-center"
+                          ref={(el) => el.focus()}
+                          value={sleepMin()}
+                          onInput={(e) => { setSleepMin(e.currentTarget.value); setSleepError('') }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') applyCustomSleep() }} />
+                        <span class="text-[12px] opacity-60 shrink-0">分钟</span>
+                        <button class="small flex-1" onClick={applyCustomSleep}>开始</button>
+                        <button class="small shrink-0" onClick={() => setSleepCustom(false)}>返回</button>
+                      </div>
+                      <Show when={sleepError()}>
+                        <p class="text-[11px] text-danger mt-1 mb-0">{sleepError()}</p>
+                      </Show>
+                    </div>
+                  </Show>
+                }>
+                  <button class="small w-full border-0 flex items-center justify-center gap-1"
+                    title="定时关闭已开启，点击取消" onClick={clearSleep}>
+                    <svg class="w-[13px] h-[13px] shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                      stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <polyline points="12 6 12 12 16 14" />
+                    </svg>
+                    <span class="truncate">剩余 {fmtSleep(sleepRemain())}</span>
+                    <span class="opacity-60 shrink-0">· 取消</span>
+                  </button>
+                </Show>
               </div>
             </div>
           </Show>

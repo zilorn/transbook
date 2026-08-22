@@ -169,4 +169,12 @@
     padding: 3px 6px;
     font-size: 12px;
   }
+  .reader-bar input {
+    background: transparent;
+    color: inherit;
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    border-radius: 6px;
+    padding: 3px 6px;
+    font-size: 12px;
+  }
 }
